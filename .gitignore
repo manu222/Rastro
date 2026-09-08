@@ -1,0 +1,4 @@
+# Herramientas y datasets externos: no se versionan
+tools/
+datasets/
+*.csv
