@@ -1,4 +1,21 @@
-# Herramientas y datasets externos: no se versionan
+# --- External tools and datasets: not our work, not versioned ---
 tools/
 datasets/
+
+# --- Analysis output ---
 *.csv
+reports/
+
+# --- Compiled binaries ---
+/rastro
+/rastro.exe
+/rastro-spike
+/rastro-spike.exe
+
+# --- Go ---
+*.test
+*.out
+vendor/
+
+# --- Local environment ---
+.env
