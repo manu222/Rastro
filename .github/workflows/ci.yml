@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Pinned so a change upstream can never silently alter what the tests run against.
+env:
+  HAYABUSA_VERSION: 4.0.0
+  DATASET_COMMIT: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+
+jobs:
+  rules:
+    name: Detection rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sigma-cli
+        run: pip install --disable-pip-version-check sigma-cli
+
+      # Format check: catches a malformed rule before it ever runs.
+      - name: Validate rule syntax
+        run: sigma check rules/
+
+      # The musl build is statically linked, so it runs on any Linux runner
+      # regardless of the glibc version installed.
+      - name: Install Hayabusa
+        run: |
+          mkdir -p tools/hayabusa
+          curl -sSL -o hayabusa.zip \
+            "https://github.com/Yamato-Security/hayabusa/releases/download/v${HAYABUSA_VERSION}/hayabusa-${HAYABUSA_VERSION}-lin-x64-musl.zip"
+          unzip -q hayabusa.zip -d tools/hayabusa
+          chmod +x tools/hayabusa/hayabusa-*
+          tools/hayabusa/hayabusa-${HAYABUSA_VERSION}-lin-x64-musl help | head -2
+
+      # Only the folders the manifests reference, at the pinned commit.
+      - name: Fetch attack samples
+        run: |
+          git clone --filter=blob:none --sparse \
+            https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES.git datasets
+          cd datasets
+          git checkout "${DATASET_COMMIT}"
+          git sparse-checkout set \
+            "Execution" "Initial Access" "Defense Evasion" "Persistence" "Credential Access"
+          echo "Samples fetched: $(find . -name '*.evtx' | wc -l)"
+
+      - name: Vet
+        run: go vet ./...
+
+      # RASTRO_REQUIRE_TOOLS turns a missing dataset or binary into a failure
+      # instead of a skip. Without it a broken setup would report success by
+      # quietly running nothing at all.
+      - name: Run rule tests
+        env:
+          RASTRO_REQUIRE_TOOLS: '1'
+        run: go test ./... -v

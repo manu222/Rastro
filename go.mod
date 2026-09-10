@@ -16,6 +16,7 @@ require (
 	github.com/pkg/errors v0.8.1 // indirect
 	golang.org/x/sys v0.0.0-20200116001909-b77594299b42 // indirect
 	golang.org/x/text v0.3.7 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	www.velocidex.com/golang/binparsergen v0.1.1-0.20201101234514-bbdb29f9ee31 // indirect
 	www.velocidex.com/golang/go-pe v0.1.1-0.20211006062218-8f6d1ad6b2d5 // indirect
 )
