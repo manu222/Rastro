@@ -36,6 +36,13 @@ type manifest struct {
 		Note string `yaml:"note"`
 	} `yaml:"expect"`
 	Total int `yaml:"total"`
+
+	// NegativeControl, when present, requires the rule's selection to match
+	// something once every exclusion filter is neutralised. It is what separates
+	// a rule that correctly finds nothing from a rule that can never fire.
+	NegativeControl *struct {
+		MinHits int `yaml:"min_hits_without_filters"`
+	} `yaml:"negative_control"`
 }
 
 // detection is one row of Hayabusa's verbose CSV output, reduced to the fields
@@ -104,6 +111,10 @@ func TestRulesMatchTheirManifests(t *testing.T) {
 				t.Errorf("unexpected match: %d hit(s) in %s, not listed in the manifest", n, file)
 			}
 
+			if m.NegativeControl != nil {
+				assertNegativeControl(t, hayabusa, root, datasets, m)
+			}
+
 			if total != m.Total {
 				t.Errorf("repository-wide total: want %d, got %d\n"+
 					"  fewer than expected means the rule stopped detecting something;\n"+
@@ -127,6 +138,10 @@ func runHayabusa(t *testing.T, bin, rules, datasets string) ([]detection, error)
 		"-r", rules,
 		"-p", "verbose",
 		"-o", out,
+		"-a", // scan every evtx file: hayabusa's channel filter skips files it
+		//       believes no loaded rule can match, which both drops real
+		//       detections and makes a rule's hit count depend on which other
+		//       rules happen to be loaded alongside it.
 		"-w", // no wizard
 		"-s", // sort, required by dfir-timeline
 		"-q", // no banner
@@ -284,4 +299,121 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// neverMatches is substituted for every value inside a filter block. No event
+// field can hold it, so the filters stay syntactically valid while excluding
+// nothing. Rewriting the condition instead would be brittle; neutralising the
+// values works whatever shape the filters have.
+const neverMatches = "RASTRO_NEGATIVE_CONTROL_SENTINEL"
+
+// assertNegativeControl re-runs one rule with its exclusions disabled and
+// requires the selection to match. A rule that still finds nothing was never
+// matching anything to begin with, and its zero-hit result meant nothing.
+func assertNegativeControl(t *testing.T, bin, root, datasets string, m manifest) {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(m.Rule)))
+	if err != nil {
+		t.Errorf("negative control: cannot read rule: %v", err)
+		return
+	}
+
+	// The rule is edited as a YAML tree rather than decoded into Go types. A
+	// round trip through map[string]interface{} rewrites values it thinks it
+	// understands — notably turning the `date: 2026-09-11` field into a full
+	// RFC3339 timestamp, which Sigma then rejects. Editing nodes preserves every
+	// scalar exactly as written.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Errorf("negative control: cannot parse rule: %v", err)
+		return
+	}
+	if len(doc.Content) == 0 {
+		t.Errorf("negative control: rule is empty")
+		return
+	}
+
+	detection := mappingValue(doc.Content[0], "detection")
+	if detection == nil {
+		t.Errorf("negative control: rule has no detection block")
+		return
+	}
+
+	neutralised := 0
+	// A mapping node stores keys and values as alternating children.
+	for i := 0; i+1 < len(detection.Content); i += 2 {
+		key := detection.Content[i].Value
+		if !strings.HasPrefix(key, "filter") {
+			continue
+		}
+		blankOut(detection.Content[i+1])
+		neutralised++
+	}
+	if neutralised == 0 {
+		t.Errorf("negative control declared but the rule has no filter blocks to disable")
+		return
+	}
+
+	rewritten, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Errorf("negative control: cannot serialise rewritten rule: %v", err)
+		return
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rule.yml"), rewritten, 0o644); err != nil {
+		t.Errorf("negative control: cannot write rewritten rule: %v", err)
+		return
+	}
+
+	found, err := runHayabusa(t, bin, dir, datasets)
+	if err != nil {
+		t.Errorf("negative control: hayabusa run failed: %v", err)
+		return
+	}
+
+	hits := 0
+	for _, d := range found {
+		if d.ruleID == m.RuleID {
+			hits++
+		}
+	}
+
+	if hits < m.NegativeControl.MinHits {
+		t.Errorf("negative control failed: with every filter disabled the rule matched %d event(s), expected at least %d.\n"+
+			"  The selection is not matching anything, so this rule cannot fire under any\n"+
+			"  circumstances and its zero-hit result proves nothing. Check field names and operators.",
+			hits, m.NegativeControl.MinHits)
+	}
+}
+
+// mappingValue returns the value node for a key in a YAML mapping.
+func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// blankOut replaces every scalar under a node with the sentinel, leaving the
+// structure intact so the rule still parses.
+func blankOut(n *yaml.Node) {
+	if n == nil {
+		return
+	}
+	if n.Kind == yaml.ScalarNode {
+		n.Value = neverMatches
+		n.Tag = "!!str"
+		n.Style = 0
+		return
+	}
+	for _, child := range n.Content {
+		blankOut(child)
+	}
 }

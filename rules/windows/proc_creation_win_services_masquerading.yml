@@ -17,19 +17,23 @@ references:
 author: Manuel Araujo
 date: 2026-09-11
 tags:
-    - attack.defense-evasion
+    - attack.stealth
     - attack.t1036.005
 logsource:
-    category: process_creation              
+    category: process_creation
     product: windows
 detection:
     process_creation:
-        EventID: 1               
+        EventID: 1
         Channel: Microsoft-Windows-Sysmon/Operational
+    # Image holds the full path, never the bare file name, so matching by name
+    # requires endswith. An exact comparison here would never fire.
     selection:
-        Image|endswith: '\services.exe'        
+        Image|endswith: '\services.exe'
+    # Matched on the full path on purpose: excluding by file name alone would let
+    # an attacker drop their own services.exe anywhere and inherit the exemption.
     filter_main_legit:
-        Image: C:\Windows\System32\services.exe
+        Image: 'C:\Windows\System32\services.exe'
     condition: process_creation and selection and not 1 of filter_main_*
 falsepositives:
     - Lab or test environments running a copy of the binary outside its original path

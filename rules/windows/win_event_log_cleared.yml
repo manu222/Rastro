@@ -1,0 +1,39 @@
+title: Windows Event Log Cleared
+id: 888e0f45-bcab-4d22-8c7d-df5e93737a52
+status: experimental
+description: |
+    Detects a Windows event log being cleared. Wiping the log is one of the
+    oldest ways to remove evidence after an intrusion, and it is recorded by the
+    logging service itself: the entry announcing the deletion survives it.
+
+    Two different events describe the same action depending on which log was
+    wiped, so both are covered here.
+references:
+    - https://attack.mitre.org/techniques/T1685/005/
+author: Manuel Araujo
+date: 2026-09-11
+tags:
+    - attack.defense-impairment
+    - attack.t1685.005
+# No category here. Unlike Sysmon telemetry, these are built-in Windows events
+# that live in two different logs, so the source is described by channel alone.
+logsource:
+    product: windows
+detection:
+    # 1. The Security log being cleared. EventID 1102, channel Security.
+    security_log:
+        EventID: 1102
+        Channel: Security
+    # 2. The System log being cleared. EventID 104, channel System.
+    system_log:
+        EventID: 104
+        Channel: System
+    # 3. Either one is a detection. No exclusions: there is no legitimate
+    #    baseline to carve out, only context a human has to judge.
+    #    Reference both blocks by name, joined by the right operator.
+    condition: security_log or system_log
+falsepositives:
+    - Scheduled log rotation or archiving performed by an administrator
+    - Reimaging or provisioning of a host, which clears logs as part of setup
+level: high
+ruletype: Sigma

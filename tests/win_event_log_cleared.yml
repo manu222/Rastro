@@ -1,0 +1,62 @@
+# Test manifest for rules/windows/win_event_log_cleared.yml
+#
+# Read the sample list before trusting the count. Nearly every Security-channel
+# capture in this dataset opens with an 1102, because whoever recorded the
+# samples cleared the log first to get a clean capture. These are real clearings
+# — the rule is not wrong — but they are an artefact of how the data was made,
+# not twelve separate intrusions.
+#
+# That is the point of listing files rather than only asserting a number: the
+# count alone would have looked like broad coverage.
+
+rule: rules/windows/win_event_log_cleared.yml
+rule_id: 888e0f45-bcab-4d22-8c7d-df5e93737a52
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Defense Evasion/DE_1102_security_log_cleared.evtx
+    hits: 1
+    note: The Security log cleared. EventID 1102, the intended case.
+
+  - file: Defense Evasion/DE_104_system_log_cleared.evtx
+    hits: 1
+    note: The System log cleared. EventID 104, the other half of the rule.
+
+  - file: Defense Evasion/DE_suspicious_remote_eventlog_svc_access_5145.evtx
+    hits: 1
+    note: Remote access to the event log service, followed by a clearing.
+
+  - file: Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx
+    hits: 1
+    note: Capture artefact — log cleared before recording.
+  - file: Credential Access/CA_chrome_firefox_opera_4663.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Credential Access/Zerologon_CVE-2020-1472_DFIR_System_NetLogon_Error_EventID_5805.evtx
+    hits: 1
+    note: Capture artefact, System log.
+  - file: Credential Access/Zerologon_VoidSec_CVE-2020-1472_4626_LT3_Anonym_follwedby_4742_DC_Anony_DC.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Credential Access/kerberos_pwd_spray_4771.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Credential Access/remote_pwd_reset_rpc_mimikatz_postzerologon_target_DC.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Credential Access/remote_sam_registry_access_via_backup_operator_priv.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Persistence/DACL_DCSync_Right_Powerview_ Add-DomainObjectAcl.evtx
+    hits: 1
+    note: Capture artefact.
+  - file: Persistence/persistence_security_dcshadow_4742.evtx
+    hits: 1
+    note: Capture artefact.
+
+total: 12
