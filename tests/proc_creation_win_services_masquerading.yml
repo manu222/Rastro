@@ -1,0 +1,35 @@
+# Test manifest for rules/windows/proc_creation_win_services_masquerading.yml
+#
+# This rule is expected to match nothing in the sample set: none of the samples
+# contain a services.exe running from outside System32. That makes it a rule
+# whose correct result and whose broken result look identical, so the negative
+# control below is not optional here.
+
+rule: rules/windows/proc_creation_win_services_masquerading.yml
+rule_id: 329afb3d-c819-4fd5-8aa3-a95b016174b9
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+# Nothing should match. Asserting this proves the rule produces no false
+# positives across 132 real attack samples.
+expect: []
+total: 0
+
+# --- Negative control ---------------------------------------------------------
+#
+# A rule that can never fire reports zero hits, exactly like a correct rule with
+# nothing to find. Without this check the two are indistinguishable, and a dead
+# rule would sit in the repository looking like coverage it does not provide.
+#
+# The harness rewrites the rule with every exclusion filter neutralised, runs it
+# again, and requires the selection to match at least this many events. If it
+# matches none, the selection itself is broken.
+#
+# Three legitimate services.exe executions exist in the sample set, so with the
+# System32 exclusion disabled the selection must find them.
+negative_control:
+  min_hits_without_filters: 3

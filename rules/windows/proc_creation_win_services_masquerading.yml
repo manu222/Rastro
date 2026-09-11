@@ -1,0 +1,37 @@
+title: services.exe Executed From A Non-Standard Path
+id: 329afb3d-c819-4fd5-8aa3-a95b016174b9
+status: experimental
+description: |
+    Detects the creation of a process named services.exe from anywhere other than
+    C:\Windows\System32. The legitimate Service Control Manager can only live in
+    that path, which needs administrative rights to write to, so any other
+    location indicates name masquerading intended to evade detections that trust
+    the process name.
+
+    This rule is the compensating control for the exclusion in
+    proc_access_win_lsass_credential_dumping.yml, which allows the legitimate
+    services.exe to access LSASS. Without this rule, an attacker dropping their
+    own services.exe elsewhere would inherit that exemption.
+references:
+    - https://attack.mitre.org/techniques/T1036/005/
+author: Manuel Araujo
+date: 2026-09-11
+tags:
+    - attack.defense-evasion
+    - attack.t1036.005
+logsource:
+    category: process_creation              
+    product: windows
+detection:
+    process_creation:
+        EventID: 1               
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        Image|endswith: '\services.exe'        
+    filter_main_legit:
+        Image: C:\Windows\System32\services.exe
+    condition: process_creation and selection and not 1 of filter_main_*
+falsepositives:
+    - Lab or test environments running a copy of the binary outside its original path
+level: high
+ruletype: Sigma
