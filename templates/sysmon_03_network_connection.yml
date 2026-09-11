@@ -1,0 +1,62 @@
+# ==============================================================================
+# TEMPLATE — Sysmon Event ID 3 — Network connection
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    category: network_connection
+    product: windows
+detection:
+    network_connection:
+        EventID: 3
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  Image|endswith: '\\rundll32.exe'
+        #       DestinationPort: 445
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   DestinationHostname, DestinationIp, DestinationIsIpv6, DestinationPort,
+#   DestinationPortName, Image, Initiated, ProcessGuid, ProcessId, Protocol,
+#   RuleName, SourceHostname, SourceIp, SourceIsIpv6, SourcePort, SourcePortName,
+#   User, UtcTime
+#
+# Notes:
+#   Sysmon only logs connections it is configured to log. A rule here is only as
+#   good as the endpoint's sysmon config — say so in falsepositives.
+#   Matching on DestinationIp ages badly: infrastructure changes. Prefer the
+#   process making the connection, or the port, or both.

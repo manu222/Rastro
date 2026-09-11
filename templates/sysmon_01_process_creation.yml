@@ -1,0 +1,65 @@
+# ==============================================================================
+# TEMPLATE — Sysmon Event ID 1 — Process creation
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  Image|endswith: '\\powershell.exe'
+        #       ParentImage|endswith: '\\WINWORD.EXE'
+        #       CommandLine|contains: ' -enc '
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   CommandLine, Company, CurrentDirectory, Description, FileVersion, Hashes,
+#   Image, IntegrityLevel, LogonGuid, LogonId, OriginalFileName, ParentCommandLine,
+#   ParentImage, ParentProcessGuid, ParentProcessId, ParentUser, ProcessGuid,
+#   ProcessId, Product, RuleName, TerminalSessionId, User, UtcTime
+#
+# Notes that save time:
+#   Image and ParentImage hold the FULL path. To match a file name use
+#   |endswith: '\\name.exe' — an exact comparison never matches.
+#   OriginalFileName survives renaming: it comes from the binary's own metadata,
+#   so it catches a renamed tool that Image would miss.
+#   CommandLine is attacker-controlled text. Match on structure, not on exact
+#   strings, and expect obfuscation.

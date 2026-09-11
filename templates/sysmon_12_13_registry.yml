@@ -1,0 +1,65 @@
+# ==============================================================================
+# TEMPLATE — Sysmon Event IDs 12 / 13 / 14 — Registry
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    registry_event:
+        # 12 = key created or deleted, 13 = value set, 14 = key or value renamed.
+        # Most detections want 13, because the interesting part is the value.
+        EventID: 13
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  TargetObject|contains: '\\CurrentVersion\\Run\\'
+        #       Details|contains: 'powershell'
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   EID 12 and 14:  EventType, Image, ProcessGuid, ProcessId, RuleName,
+#                   TargetObject, UtcTime
+#   EID 13 adds:    Details
+#
+# Notes:
+#   TargetObject is the full registry path; Details is the value written, and
+#   exists only on EID 13.
+#   Sysmon abbreviates hives: HKLM and HKU, not HKEY_LOCAL_MACHINE. Matching the
+#   long form finds nothing.
+#   Persistence usually shows as a value written under a Run key, a service, or
+#   an image-hijack path. Match the key with |contains and the payload in Details.

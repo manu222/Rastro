@@ -1,0 +1,74 @@
+# ==============================================================================
+# TEMPLATE — Windows built-in logs — Security / System channels
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    # No category: these are built-in Windows events, identified by channel.
+    # Add 'service: security' if the rule only covers one channel.
+    product: windows
+detection:
+    # Name the block after what it describes. Repeat it for a second channel and
+    # join them in the condition with 'or'.
+    security_event:
+        EventID: FILL
+        Channel: Security
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  TargetUserName|endswith: '$'
+        #       LogonType: 3
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   4688 process creation: CommandLine, MandatoryLabel, NewProcessId,
+#        NewProcessName, ParentProcessName, ProcessId, SubjectDomainName,
+#        SubjectLogonId, SubjectUserName, SubjectUserSid, TokenElevationType
+#   4624 logon:            AuthenticationPackageName, ElevatedToken, IpAddress,
+#        IpPort, LogonType, LogonProcessName, ProcessName, TargetUserName,
+#        TargetDomainName, TargetLogonId, WorkstationName
+#   4662 directory access: AccessList, AccessMask, ObjectName, ObjectServer,
+#        ObjectType, Properties, SubjectUserName, SubjectLogonId
+#   4720 account created:  SamAccountName, TargetUserName, TargetDomainName,
+#        UserAccountControl, PrivilegeList, SubjectUserName
+#   4732 added to group:   MemberName, MemberSid, TargetUserName, TargetDomainName,
+#        SubjectUserName
+#   1102 Security log cleared / 104 System log cleared: no EventData fields.
+#
+# Notes:
+#   4688 only exists if command-line auditing is switched on. Sysmon EID 1 is
+#   richer and more reliable where it is deployed.
+#   These logs are far noisier than Sysmon: a rule here needs a tighter selection
+#   and a more honest falsepositives section.

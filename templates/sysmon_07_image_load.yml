@@ -1,0 +1,62 @@
+# ==============================================================================
+# TEMPLATE — Sysmon Event ID 7 — Image (DLL) loaded
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    category: image_load
+    product: windows
+detection:
+    image_load:
+        EventID: 7
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  ImageLoaded|endswith: '\\vaultcli.dll'
+        #       Signed: 'false'
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   Company, Description, FileVersion, Hashes, Image, ImageLoaded, OriginalFileName,
+#   ProcessGuid, ProcessId, Product, RuleName, Signature, SignatureStatus, Signed,
+#   UtcTime
+#
+# Notes:
+#   Image is who loaded it; ImageLoaded is what was loaded. Mixing them up is the
+#   most common mistake on this event.
+#   Signed and SignatureStatus let you spot unsigned DLLs in places that should
+#   only hold signed ones — a strong signal for hijacking.
+#   This event is extremely high volume. Without a tight selection you will drown.

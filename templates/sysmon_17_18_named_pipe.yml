@@ -1,0 +1,63 @@
+# ==============================================================================
+# TEMPLATE — Sysmon Event IDs 17 / 18 — Named pipes
+# ==============================================================================
+# Copy this file into rules/windows/, rename it after what it detects, and fill
+# in every line marked FILL. Delete this header block when you are done.
+#
+# Generate a fresh id first — never reuse another rule's:
+#     PowerShell:  [guid]::NewGuid()
+# ==============================================================================
+
+title: FILL — a short statement of the behaviour, not the tool
+id: FILL — paste a new GUID here
+status: experimental
+description: |
+    FILL — what this detects and, more importantly, WHY this signal is hard for
+    an attacker to avoid. If the answer is "because the tool is called X", the
+    rule is keyed on the wrong thing.
+references:
+    - FILL — https://attack.mitre.org/techniques/TXXXX/YYY/
+author: FILL
+date: FILL — YYYY-MM-DD
+tags:
+    # Verify both against current ATT&CK data: sigma check will reject stale
+    # tactic names and retired technique IDs.
+    - FILL — attack.<tactic>
+    - FILL — attack.t<technique>
+logsource:
+    category: pipe_created
+    product: windows
+detection:
+    pipe_event:
+        # 17 = pipe created, 18 = pipe connected. Detections usually want both.
+        EventID:
+            - 17
+            - 18
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        # FILL — the fields that identify the behaviour.
+        # e.g.  PipeName|startswith: '\\PSEXESVC'
+        #       PipeName|contains: 'msagent_'
+    # Optional. Delete if the rule has no legitimate baseline to exclude.
+    # Every exclusion is a blind spot: match on the most specific value you can,
+    # and record what you are giving up.
+    filter_main_legit:
+        # FILL
+    condition: FILL
+falsepositives:
+    - FILL — be specific. "Unknown" tells a future analyst nothing.
+level: FILL — informational | low | medium | high | critical
+ruletype: Sigma
+
+# ------------------------------------------------------------------------------
+# FIELDS AVAILABLE ON THIS EVENT
+# Extracted from the real samples in datasets/, not from documentation.
+# ------------------------------------------------------------------------------
+#   EventType, Image, PipeName, ProcessGuid, ProcessId, RuleName, UtcTime
+#
+# Notes:
+#   Named pipes are how remote execution tools talk to the service they install.
+#   PipeName often carries a tool's signature pattern even when the binary has
+#   been renamed, which makes this event unusually resistant to evasion.
+#   Sysmon must have pipe logging enabled; many deployments leave it off. Say so
+#   in falsepositives, because a silent gap is worse than a noisy rule.
