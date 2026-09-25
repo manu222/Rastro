@@ -36,7 +36,7 @@ detection:
         Channel: Microsoft-Windows-Sysmon/Operational
     selection:
         # FILL — the fields that identify the behaviour.
-        # e.g.  PipeName|startswith: '\\PSEXESVC'
+        # e.g.  PipeName|startswith: '\PSEXESVC'
         #       PipeName|contains: 'msagent_'
     # Optional. Delete if the rule has no legitimate baseline to exclude.
     # Every exclusion is a blind spot: match on the most specific value you can,

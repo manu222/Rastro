@@ -33,8 +33,8 @@ detection:
         Channel: Microsoft-Windows-Sysmon/Operational
     selection:
         # FILL — the fields that identify the behaviour.
-        # e.g.  Image|endswith: '\\powershell.exe'
-        #       ParentImage|endswith: '\\WINWORD.EXE'
+        # e.g.  Image|endswith: '\powershell.exe'
+        #       ParentImage|endswith: '\WINWORD.EXE'
         #       CommandLine|contains: ' -enc '
     # Optional. Delete if the rule has no legitimate baseline to exclude.
     # Every exclusion is a blind spot: match on the most specific value you can,
@@ -58,7 +58,7 @@ ruletype: Sigma
 #
 # Notes that save time:
 #   Image and ParentImage hold the FULL path. To match a file name use
-#   |endswith: '\\name.exe' — an exact comparison never matches.
+#   |endswith: '\name.exe' — an exact comparison never matches.
 #   OriginalFileName survives renaming: it comes from the binary's own metadata,
 #   so it catches a renamed tool that Image would miss.
 #   CommandLine is attacker-controlled text. Match on structure, not on exact

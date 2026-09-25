@@ -35,8 +35,10 @@ detection:
         Channel: Microsoft-Windows-Sysmon/Operational
     selection:
         # FILL — the fields that identify the behaviour.
-        # e.g.  TargetObject|contains: '\\CurrentVersion\\Run\\'
-        #       Details|contains: 'powershell'
+        # e.g.  TargetObject|contains: '\CurrentVersion\Run\'
+        # Key on the path, not on the payload. Adding Details|contains for a
+        # specific program narrows the rule to that one program and blinds it
+        # to every other thing written to the same key.
     # Optional. Delete if the rule has no legitimate baseline to exclude.
     # Every exclusion is a blind spot: match on the most specific value you can,
     # and record what you are giving up.
