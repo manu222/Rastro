@@ -1,0 +1,37 @@
+# Test manifest for rules/windows/registry_set_win_autostart_run_key.yml
+#
+# Two detections across 132 sample files. That is thin coverage, and the reason
+# is the dataset rather than the rule: it is built around credential access,
+# execution and defence evasion, and registry persistence appears in only a
+# handful of captures. A rule that fires twice here can still be the right rule.
+#
+# No negative control on this one. The control exists to prove that a rule is
+# not being silenced by its own exclusions, and this rule has none: there is no
+# stable set of paths that legitimate software writes from, so the noise is
+# documented in falsepositives instead of filtered away.
+
+rule: rules/windows/registry_set_win_autostart_run_key.yml
+rule_id: 7b6fa8d1-149f-400c-8394-8d121f6baae1
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Persistence/evasion_persis_hidden_run_keyvalue_sysmon_13.evtx
+    hits: 1
+    note: >-
+      Value written under HKLM ...\CurrentVersion\Run\ with an empty name, so it
+      does not appear in a reg query listing. The rule matches the key path, not
+      the value name, which is why the trick does not hide it.
+
+  - file: Persistence/persistence_startup_UserShellStartup_Folder_Changed_sysmon_13.evtx
+    hits: 1
+    note: >-
+      Startup folder redirected by writing User Shell Folders\startup, executed
+      through reg.exe. Nothing is added to an autostart key here: the folder
+      Windows opens at logon is moved instead.
+
+total: 2

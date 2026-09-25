@@ -1,0 +1,59 @@
+title: Autostart Registry Value Set
+id: 7b6fa8d1-149f-400c-8394-8d121f6baae1
+status: experimental
+description: |
+    Detects a value written under a registry location that Windows reads on boot
+    or logon. Persistence has to be recorded somewhere the system will consult by
+    itself, so the payload can be renamed and the command obfuscated, but the
+    write cannot be skipped.
+
+    The rule matches the path of the key, not the name of the value. Writing the
+    value with an empty name, a known trick to keep the entry out of a reg query
+    listing, therefore does not evade it.
+references:
+    - https://attack.mitre.org/techniques/T1547/001/
+author: Manuel Araujo
+date: 2026-09-25
+tags:
+    - attack.persistence
+    - attack.t1547.001
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    registry_event:
+        # 13 is a value being set. Creating the key would be 12, but these keys
+        # already exist on every Windows install: what the attacker adds is a
+        # value inside one of them.
+        EventID: 13
+        Channel: Microsoft-Windows-Sysmon/Operational
+    # 1. A value written under one of the keys Windows reads by itself at boot or
+    #    at logon. Listed one by one rather than matching the shared 'Run' prefix,
+    #    so that whoever reads the rule can see which keys are covered and which
+    #    are not.
+    selection_autostart_key:
+        TargetObject|contains:
+            - '\CurrentVersion\Run\'
+            - '\CurrentVersion\RunOnce\'
+            - '\CurrentVersion\RunOnceEx\'
+            - '\CurrentVersion\RunServices\'
+            - '\CurrentVersion\RunServicesOnce\'
+            - '\CurrentVersion\Policies\Explorer\Run\'
+    # 2. The Startup folder pointed somewhere else. No autostart value is written
+    #    here at all: the folder Windows opens at logon is moved, so whatever
+    #    already sits in the new location runs. Two parts of the same path have to
+    #    match, which is why this needs a block of its own.
+    selection_startup_folder:
+        TargetObject|contains: '\Explorer\User Shell Folders'
+        TargetObject|endswith: 'Startup'
+    # 3. Either route is a detection. No exclusions: legitimate software writes
+    #    to these keys constantly, but never from a set of paths stable enough to
+    #    filter on, so the noise is documented below instead of hidden here.
+    condition: registry_event and 1 of selection_*
+falsepositives:
+    - Installers and updaters registering their own autostart entry on first run
+    - Applications with a "start with Windows" option, which write the same value
+      when the user enables it
+    - Provisioning or roaming-profile tooling that redirects the Startup folder
+level: medium
+ruletype: Sigma
