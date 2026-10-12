@@ -1,0 +1,30 @@
+# Test manifest for rules/windows/registry_set_win_uac_disabled.yml
+#
+# The rule covers four UAC policy values. This dataset exercises exactly one of
+# them: searching all 132 sample files for ConsentPromptBehaviorAdmin,
+# PromptOnSecureDesktop and FilterAdministratorToken returns nothing, so three
+# quarters of the rule is declared coverage with no test behind it. The single
+# expectation below is the only one the data can support, and the gap is written
+# down here rather than left for someone to assume away.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/windows/registry_set_win_uac_disabled.yml
+rule_id: a14a7254-8ea0-4167-a696-eefc37a9e7f2
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Defense Evasion/DE_UAC_Disabled_Sysmon_12_13.evtx
+    hits: 1
+    note: >-
+      EnableLUA set to zero through reg.exe. The capture also holds the matching
+      process creation and the CreateKey event, which this rule deliberately
+      ignores: the process is one way of many to perform the write, and the key
+      already exists on every host.
+
+total: 1

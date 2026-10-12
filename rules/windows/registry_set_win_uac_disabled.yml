@@ -1,0 +1,54 @@
+title: UAC Policy Weakened Via Registry
+id: a14a7254-8ea0-4167-a696-eefc37a9e7f2
+status: experimental
+description: |
+    Detects a User Account Control policy value being set to zero. UAC decides
+    whether a process started by an administrator receives its elevated token
+    without asking, and that decision is read from this one key, so switching
+    the control off means writing here.
+
+    The rule matches the value left behind rather than the program that wrote
+    it: reg.exe, Set-ItemProperty, an imported .reg file and a direct API call
+    all produce the same event.
+
+    It sees UAC switched off, not UAC evaded. A bypass leaves UAC enabled and
+    goes around it through an auto-elevating binary or a COM hijack, without
+    touching this key. That case is a declared blind spot of this rule.
+references:
+    - https://attack.mitre.org/techniques/T1685/
+author: Manuel Araujo
+date: 2026-10-12
+tags:
+    - attack.defense-impairment
+    - attack.t1685
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    registry_event:
+        # 13 is a value being set. The policy key itself exists on every Windows
+        # install and is written by the system during setup, so the signal is
+        # the value that ends up there, not the fact that something wrote.
+        EventID: 13
+        Channel: Microsoft-Windows-Sysmon/Operational
+    # The list is an OR across the four values; Details is a separate field in
+    # the same block, so it ANDs with all of them: any of these four, set to
+    # zero. Details is an exact comparison because the whole string is the
+    # value, and Sysmon renders a REG_DWORD zero as 'DWORD (0x00000000)' —
+    # matching '0' or '0x0' finds nothing.
+    selection_uac_off:
+        TargetObject|endswith:
+            - '\Policies\System\EnableLUA'
+            - '\Policies\System\ConsentPromptBehaviorAdmin'
+            - '\Policies\System\PromptOnSecureDesktop'
+            - '\Policies\System\FilterAdministratorToken'
+        Details: 'DWORD (0x00000000)'
+    # No exclusions. The legitimate cases below are deliberate acts by a human
+    # or a build script, indistinguishable from the attack in the event itself,
+    # so they are documented rather than filtered out.
+    condition: registry_event and selection_uac_off
+falsepositives:
+    - An administrator lowering UAC by hand to get a legacy application working
+    - Provisioning or image-build scripts that weaken UAC on lab and test hosts
+level: high
+ruletype: Sigma
