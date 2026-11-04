@@ -1,0 +1,41 @@
+{
+ "Event": {
+  "#attributes": {
+   "xmlns": "http://schemas.microsoft.com/win/2004/08/events/event"
+  },
+  "System": {
+   "Provider": {
+    "#attributes": {
+     "Guid": "{68fdd900-4a3e-11d1-84f4-0000f80464e3}"
+    }
+   },
+   "EventID": 0,
+   "Version": 2,
+   "Level": 0,
+   "Task": 0,
+   "Opcode": 80,
+   "Keywords": "0x0",
+   "TimeCreated": {
+    "#attributes": {
+     "SystemTime": "2021-08-17T12:26:48.5710228Z"
+    }
+   },
+   "EventRecordID": 0,
+   "Correlation": null,
+   "Execution": {
+    "#attributes": {
+     "ProcessID": 24712,
+     "ThreadID": 19724
+    }
+   },
+   "Channel": null,
+   "Computer": "LAPTOP-JU4M3I0E",
+   "Security": null
+  },
+  "ProcessingErrorData": {
+   "ErrorCode": 15003,
+   "DataItemName": null,
+   "EventPayload": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  }
+ }
+}
