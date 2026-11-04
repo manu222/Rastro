@@ -196,6 +196,8 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 
 	e := &event.Event{
 		Time:     flat.Time,
+		// The source's own word for what happened, when the mapping finds one.
+		// Until then the event id is the only word the record gives.
 		Activity: flat.Fields["EventID"],
 		Origin: event.Origin{
 			Path:      path,
@@ -214,10 +216,10 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 		e.Add(event.KindHost, "", e.Host)
 	}
 
-	// Everything past this point — which fields become which entities, which
-	// class an event belongs to — is per event identifier and comes next. The
-	// reader deliberately stops at the host, so that the mapping tables are
-	// written against real output rather than alongside it.
+	// What the record means — its class, the processes and account involved,
+	// the entities a report groups by — is knowledge about Windows and lives in
+	// the table that holds the rest of it.
+	winevent.Classify(flat, e)
 	return e, flat, nil
 }
 

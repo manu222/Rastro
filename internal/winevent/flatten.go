@@ -184,6 +184,13 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 			continue
 		}
 		for inner, content := range block {
+			// A namespace declaration is XML plumbing. One record in the pinned
+			// corpus produced a field called xmlns:auto-ns2 holding a schema
+			// URL, which is the kind of thing that ends up in a report because
+			// nobody looked at the output.
+			if strings.HasPrefix(inner, "xmlns") {
+				continue
+			}
 			f.Blocks = append(f.Blocks, name+"/"+inner)
 			fields, ok := content.(map[string]any)
 			if !ok {
@@ -256,9 +263,24 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 //	              where the binary carried no version resource
 //	"Binary Data" Details on a Sysmon 13, where the written value was too large
 //	              for the provider to include
+//	"%%1793"      DisplayName, HomeDirectory, HomePath, ScriptPath, ProfilePath,
+//	              UserWorkstations and LogonHours on an account event, where it
+//	              is a reference into the provider's message table rather than
+//	              plain text. Windows itself renders it as "<value not set>",
+//	              confirmed by having a real installation render a 4720 out of
+//	              this corpus: all seven of those fields carried %%1793 and all
+//	              seven came out as "value not set". It is the only code those
+//	              fields carry anywhere in the corpus.
+//
+// Two codes that look like it are deliberately not here. %%1794 is "<never>",
+// which is a fact about an account and not the absence of one — an account that
+// never expires is something a report should say. And %%1792 is "<value
+// changed, but not displayed>", which is Windows stating that there is a value
+// and declining to show it; treating that as nothing would hide the one thing
+// it says.
 func Unavailable(s string) bool {
 	switch strings.TrimSpace(s) {
-	case "", "-", "?", "Binary Data":
+	case "", "-", "?", "Binary Data", "%%1793":
 		return true
 	}
 	return false

@@ -116,6 +116,9 @@ const (
 	ClassService            // a service or daemon started, stopped or was installed
 	ClassPipe               // a named pipe was created or connected to
 	ClassLog                // the logging subsystem itself was touched
+	ClassModule             // a module or driver was loaded into a process
+	ClassDirectory          // a directory object was read or changed
+	ClassWMI                // a WMI subscription was registered, bound or fired
 )
 
 func (c Class) String() string {
@@ -140,6 +143,12 @@ func (c Class) String() string {
 		return "pipe"
 	case ClassLog:
 		return "log"
+	case ClassModule:
+		return "module"
+	case ClassDirectory:
+		return "directory"
+	case ClassWMI:
+		return "wmi"
 	default:
 		return "unknown"
 	}
@@ -161,6 +170,13 @@ const (
 	KindAddress // an IP address, or a host:port once the network source lands
 	KindDomain
 	KindHash
+	// KindSession is a logon session. It is the join that answers "who was
+	// behind this" for the events that name no user: three of the four Sysmon
+	// events a report leans on carry no account at all, and the logon id that
+	// a process creation does carry is the same one the logon event wrote.
+	KindSession
+	KindService
+	KindTask // a scheduled task, by the name the scheduler knows it as
 )
 
 func (k Kind) String() string {
@@ -183,6 +199,12 @@ func (k Kind) String() string {
 		return "domain"
 	case KindHash:
 		return "hash"
+	case KindSession:
+		return "session"
+	case KindService:
+		return "service"
+	case KindTask:
+		return "task"
 	default:
 		return "unknown"
 	}
@@ -262,6 +284,11 @@ type Event struct {
 	Time     time.Time
 	Class    Class
 	Activity string // the source's own word: "CreateKey", "SetValue", "execve"
+	// Action is the same thing in words a person reads: "registry value set".
+	// It is written here rather than worked out at print time because what an
+	// event id means is knowledge about Windows, and that belongs next to the
+	// table that holds the rest of it.
+	Action string
 
 	Origin Origin
 
@@ -269,6 +296,11 @@ type Event struct {
 	User    Field
 	Process Process
 	Parent  Process
+	// Target is the process this event was done TO, which is a different thing
+	// from the one that did it. On a Sysmon 10 the actor is unremarkable and
+	// the target is lsass.exe; a model that only had one process field would
+	// have to choose, and either choice loses the finding.
+	Target Process
 
 	Entities []Entity
 
