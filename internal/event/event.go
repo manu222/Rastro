@@ -236,6 +236,11 @@ type Origin struct {
 	// "auditd" — which is also what tells the detection stage which native field
 	// names to expect.
 	Producer string
+	// TimeField names the field Time was read from, because not all times mean
+	// the same thing. A provider that states when something happened is a
+	// better answer than the moment its record was written, and a timeline that
+	// mixes the two owes the reader an explanation of which it used where.
+	TimeField string
 }
 
 // Fields holds the event exactly as the source recorded it, with the source's

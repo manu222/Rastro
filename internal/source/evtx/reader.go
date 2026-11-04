@@ -187,14 +187,21 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 		Time:     flat.Time,
 		Activity: flat.Fields["EventID"],
 		Origin: event.Origin{
-			Path:     path,
-			Record:   record,
-			Producer: producerOf(flat),
+			Path:      path,
+			Record:    record,
+			Producer:  producerOf(flat),
+			TimeField: flat.TimeSource,
 		},
-		Host: event.Seen(flat.Computer),
-		Raw:  event.Fields(flat.Fields),
+		Raw: event.Fields(flat.Fields),
 	}
-	e.Add(event.KindHost, "", e.Host)
+
+	// A host is only recorded when the record names one. Windows writes "-" and
+	// "?" where it has nothing to say, and a machine called "-" in a report is
+	// worse than an admitted blank: the analyst cannot tell it from a real name.
+	if !winevent.Unavailable(flat.Computer) {
+		e.Host = event.Seen(flat.Computer)
+		e.Add(event.KindHost, "", e.Host)
+	}
 
 	// Everything past this point — which fields become which entities, which
 	// class an event belongs to — is per event identifier and comes next. The

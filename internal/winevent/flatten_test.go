@@ -211,6 +211,122 @@ func TestGoParserShape(t *testing.T) {
 	}
 }
 
+// Sysmon writes two times: when the event happened, and when the record was
+// written. They are not the same instant, and in this corpus they differ by up
+// to 41 milliseconds — enough to reorder two events in a timeline. The
+// provider's own account of when it happened wins.
+func TestProviderTimeWinsOverRecordTime(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider":    map[string]any{"Name": "Microsoft-Windows-Sysmon"},
+				"EventID":     map[string]any{"Value": int64(11)},
+				"Computer":    "MSEDGEWIN10",
+				"TimeCreated": map[string]any{"SystemTime": 1599826222.3987265},
+			},
+			"EventData": map[string]any{
+				"UtcTime":         "2020-09-11 12:10:22.357",
+				"CreationUtcTime": "2019-01-01 00:00:00.000",
+				"TargetFilename":  `C:\Windows\System32\mimilsa.log`,
+			},
+		},
+	}
+
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.TimeSource != "UtcTime" {
+		t.Errorf("the record's own write time was preferred: %q", f.TimeSource)
+	}
+	if got := f.Time.Format("2006-01-02 15:04:05.000"); got != "2020-09-11 12:10:22.357" {
+		t.Errorf("want the provider's time, got %s", got)
+	}
+	// CreationUtcTime is a property of the file, not of the event. Reading it as
+	// the event time would move the event to whenever somebody last touched
+	// whatever it mentions.
+	if f.Time.Year() == 2019 {
+		t.Error("a file's creation time was used as the event time")
+	}
+}
+
+// A provider that writes no time of its own leaves the record's write time as
+// the best answer available, and says so.
+func TestRecordTimeIsUsedWhenThereIsNothingBetter(t *testing.T) {
+	f, err := Flatten(load(t, "security_4662"), normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.TimeSource != "TimeCreated" {
+		t.Errorf("time source: %q", f.TimeSource)
+	}
+	if f.Time.IsZero() {
+		t.Error("no time at all was read")
+	}
+}
+
+// An unparseable UtcTime must not throw away the time the record header
+// already gave, and must not pass unnoticed either.
+func TestUnreadableProviderTimeFallsBackAndIsRecorded(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider":    map[string]any{"Name": "Microsoft-Windows-Sysmon"},
+				"EventID":     map[string]any{"Value": int64(1)},
+				"TimeCreated": map[string]any{"SystemTime": 1599826222.0},
+			},
+			"EventData": map[string]any{"UtcTime": "yesterday"},
+		},
+	}
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.TimeSource != "TimeCreated" || f.Time.IsZero() {
+		t.Errorf("the header time was lost: %q %s", f.TimeSource, f.Time)
+	}
+	if len(f.Skipped) != 1 || f.Skipped[0] != "UtcTime" {
+		t.Errorf("a time that could not be read went unrecorded: %v", f.Skipped)
+	}
+}
+
+// The four ways this corpus writes "nothing here". They stay in Fields, because
+// a rule must see what the provider wrote; what they must not do is become a
+// value in anything a person reads.
+func TestUnavailableRecognisesTheProvidersBlanks(t *testing.T) {
+	for _, s := range []string{"", " ", "-", "?", "Binary Data"} {
+		if !Unavailable(s) {
+			t.Errorf("%q was taken for information", s)
+		}
+	}
+	for _, s := range []string{"IEWIN7", "0", "false", "C:\\Windows", "Binary Data is fine"} {
+		if Unavailable(s) {
+			t.Errorf("%q was taken for a blank", s)
+		}
+	}
+}
+
+// The same record that has a "?" for Company keeps it in Fields: the flattener
+// does not get to decide what detection sees.
+func TestBlanksAreStillInTheFlatView(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider": map[string]any{"Name": "Microsoft-Windows-Sysmon"},
+				"EventID":  map[string]any{"Value": int64(1)},
+			},
+			"EventData": map[string]any{"Company": "?", "RuleName": "-"},
+		},
+	}
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Fields["Company"] != "?" || f.Fields["RuleName"] != "-" {
+		t.Errorf("a value the provider wrote was filtered out of the flat view: %v", f.Fields)
+	}
+}
+
 // HexInt stands in for the named types a parser is free to return. The EVTX
 // library declares `type HexInt uint64` and hands it back for fields such as
 // Keywords.

@@ -87,6 +87,7 @@ func run(root string) error {
 		firstFailure  string
 		skippedFields int
 		byChannel     = map[string]int{}
+		byTimeField   = map[string]int{}
 		earliest      time.Time
 		latest        time.Time
 	)
@@ -104,6 +105,7 @@ func run(root string) error {
 		stats, err := reader.ReadFile(path, func(e *event.Event) error {
 			records++
 			byChannel[e.Origin.Producer]++
+			byTimeField[e.Origin.TimeField]++
 			// One record of each source, kept whole. This is what the mapping
 			// tables are written against: which field holds the actor, which
 			// holds the target, which identifier belongs to which event. Doing
@@ -164,6 +166,11 @@ func run(root string) error {
 	}
 	if withoutTime > 0 {
 		fmt.Printf("Without a time  : %d record(s)\n", withoutTime)
+	}
+	// Which field each event's time came from. A timeline built from two
+	// different meanings of "when" has to be able to say which it used where.
+	if n := byTimeField["UtcTime"]; n > 0 {
+		fmt.Printf("Provider's time : %d of %d record(s) state when the event happened\n", n, records)
 	}
 	if !earliest.IsZero() {
 		fmt.Printf("Time span       : %s to %s\n",

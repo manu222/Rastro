@@ -42,10 +42,14 @@ type Flat struct {
 	Computer string
 	EventID  int
 	Time     time.Time
+	// TimeSource names the field Time was read from: UtcTime when the provider
+	// says when the event happened, TimeCreated when all that is known is when
+	// the record was written.
+	TimeSource string
 
 	// Fields is what the rules see.
 	Fields map[string]string
-	// Skipped names System fields that could not be rendered at all. The
+	// Skipped names fields that could not be rendered or used at all. The
 	// record is kept: one field of an unusual type is a reason to flag that
 	// field, not to throw away evidence. Empty on every record of the pinned
 	// corpus.
@@ -180,8 +184,53 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 			return Flat{}, err
 		}
 		f.Time = t
+		f.TimeSource = "TimeCreated"
+	}
+	// A provider that states when the event happened is believed over the
+	// moment its record was written. Sysmon writes both, and in this corpus
+	// they differ by up to 41 milliseconds — enough to put two events in the
+	// wrong order, which is enough to change the story a timeline tells.
+	//
+	// The key is matched exactly. Sysmon also writes CreationUtcTime and
+	// PreviousCreationUtcTime, and those are properties of a file, not of the
+	// event: taking either for the event time would move an event to whenever
+	// somebody last touched the file it mentions.
+	if ts := f.Fields["UtcTime"]; ts != "" {
+		t, err := parseUtcTime(ts)
+		if err != nil {
+			f.Skipped = append(f.Skipped, "UtcTime")
+		} else {
+			f.Time = t
+			f.TimeSource = "UtcTime"
+		}
 	}
 	return f, nil
+}
+
+// Unavailable reports whether a value is one of the ways Windows writes "there
+// is nothing here".
+//
+// These are values in the file, so they stay in Fields exactly as written: a
+// rule has to see what the provider wrote, and deciding otherwise here would
+// make detection depend on this function's taste. What they are not is
+// information, so nothing built for a person to read should present them as
+// one. An entity named "-", or a report line reading Company: ?, is noise
+// dressed up as evidence.
+//
+// Every spelling below was taken out of the corpus rather than guessed:
+//
+//	""            RuleName, on a Sysmon 10
+//	"-"           RuleName on a Sysmon 11, and most absent Security fields
+//	"?"           Company, Description, FileVersion and Product on a Sysmon 1,
+//	              where the binary carried no version resource
+//	"Binary Data" Details on a Sysmon 13, where the written value was too large
+//	              for the provider to include
+func Unavailable(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "", "-", "?", "Binary Data":
+		return true
+	}
+	return false
 }
 
 // scalar renders a System value. These are plain types: Windows does not put
@@ -293,4 +342,17 @@ func parseSystemTime(ts string) (time.Time, error) {
 		return time.Unix(int64(whole), int64(frac*float64(time.Second))).UTC(), nil
 	}
 	return time.Time{}, fmt.Errorf("SystemTime %q is neither a timestamp nor a number of seconds", ts)
+}
+
+// parseUtcTime reads the timestamp a provider writes in its own fields. There
+// is no zone in the text because the field name is the zone: Sysmon writes UTC
+// and says so in the name. The fractional part is optional in the layout, so a
+// record written to the second parses as well as one written to the
+// millisecond.
+func parseUtcTime(ts string) (time.Time, error) {
+	t, err := time.Parse("2006-01-02 15:04:05.999999999", ts)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("UtcTime %q is not a timestamp", ts)
+	}
+	return t.UTC(), nil
 }
