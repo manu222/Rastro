@@ -1,0 +1,76 @@
+# Test manifest for rules/windows/proc_creation_win_rundll32_proxy_execution.yml
+#
+# Twelve detections across eight files, the widest coverage in this library so
+# far, and the one that deserves the most caution. Most of it comes from the
+# export list, which is a list of known abuses rather than a property of the
+# behaviour: it will age, and an abuse through an export that is not on it
+# passes unseen. The one expectation that does not depend on any list is the
+# Meterpreter capture, where rundll32 runs with no arguments at all.
+#
+# Three rundll32 captures in this dataset are deliberately NOT expected, and a
+# drop to fewer than twelve hits should be read against this list before anyone
+# assumes a regression:
+#   sysmon_1_11_rundll32_cpl_ostap.evtx      shell32.dll,Control_RunDLL, left out
+#                                            because it is how Windows opens
+#                                            every Control Panel applet.
+#   sysmon_10_1_memdump_comsvcs_minidump     comsvcs.dll,MiniDump is LSASS
+#                                            dumping; it belongs to a credential
+#                                            access rule, not to this one.
+#   Sysmon 7 Update Session Orchestrator     a hijacked DLL loaded by rundll32,
+#                                            which is a different technique.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/windows/proc_creation_win_rundll32_proxy_execution.yml
+rule_id: 946871c4-50c4-42a6-ad70-853bafd6339e
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Execution/exec_sysmon_1_11_lolbin_rundll32_openurl_FileProtocolHandler.evtx
+    hits: 5
+    note: >-
+      Five calls through url.dll and ieframe.dll, using both OpenURL and
+      FileProtocolHandler, launching an executable and an .hta.
+
+  - file: Execution/exec_sysmon_1_11_lolbin_rundll32_shdocvw_openurl.evtx
+    hits: 1
+    note: shdocvw.dll,OpenURL pointed at a .url file dropped in the user's temp.
+
+  - file: Execution/exec_sysmon_1_11_lolbin_rundll32_zipfldr_RouteTheCall.evtx
+    hits: 1
+    note: zipfldr.dll,RouteTheCall launching an executable by path.
+
+  - file: Execution/sysmon_lolbas_rundll32_zipfldr_routethecall_shell.evtx
+    hits: 1
+    note: >-
+      The same export used against a shell CLSID instead of a path, which is
+      why the rule matches the library and the export rather than the argument.
+
+  - file: Execution/exec_sysmon_1_lolbin_rundll32_advpack_RegisterOCX.evtx
+    hits: 1
+    note: advpack.dll,RegisterOCX launching an executable.
+
+  - file: Execution/exec_sysmon_1_rundll32_pcwutl_LaunchApplication.evtx
+    hits: 1
+    note: pcwutl.dll,LaunchApplication launching an executable.
+
+  - file: Execution/exec_persist_rundll32_mshta_scheduledtask_sysmon_1_3_11.evtx
+    hits: 1
+    note: >-
+      The javascript: form, where mshtml and RunHTMLApplication are embedded in
+      an inline script rather than passed as a normal argument. Matching the
+      library and the export separately is what catches it.
+
+  - file: Execution/Sysmon_meterpreter_ReflectivePEInjection_to_notepad_.evtx
+    hits: 1
+    note: >-
+      rundll32 with no library and no export. Nothing to run, so the process
+      exists only to receive injected code. The only expectation here that does
+      not rest on a list.
+
+total: 12

@@ -1,0 +1,88 @@
+title: rundll32.exe Proxy Execution
+id: 946871c4-50c4-42a6-ad70-853bafd6339e
+status: experimental
+description: |
+    Detects rundll32 being used to run something other than an ordinary library
+    entry point: either a built-in Windows DLL whose export exists to launch
+    another program, or rundll32 started with no arguments at all.
+
+    Nothing in these command lines belongs to the attacker. The executable and
+    the library are signed by Microsoft, allow-listed by application control and
+    part of every endpoint baseline, so there is no file of theirs to hash or
+    scan. What stays visible is the pair of library and export, which has to
+    appear on the command line for the call to work.
+
+    The export list is the weak half of this rule and is treated as such: an
+    abuse that uses an export not listed here passes unseen. The second branch
+    does not depend on a list. A rundll32 process with no library and no export
+    has nothing to run, so it exists only to be injected into, which is how
+    Meterpreter and Cobalt Strike place a host process.
+references:
+    - https://attack.mitre.org/techniques/T1218/011/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.stealth
+    - attack.t1218.011
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    # Either field identifies the process. Image alone would miss a renamed
+    # copy; OriginalFileName alone would miss half the events, because only 19
+    # of the 36 rundll32 process creations in the pinned dataset carry that
+    # field at all — the captures come from different Sysmon versions.
+    rundll32_process:
+        - Image|endswith: '\rundll32.exe'
+        - OriginalFileName: 'RUNDLL32.EXE'
+    # The library and the export are matched separately rather than as one
+    # 'zipfldr.dll,RouteTheCall' string, because rundll32 accepts a space after
+    # the comma. The dataset contains such a call, so a single joined string
+    # would already be evaded by data recorded years ago.
+    selection_lolbin_dll:
+        CommandLine|contains:
+            - 'advpack.dll'
+            - 'ieadvpack.dll'
+            - 'pcwutl.dll'
+            - 'zipfldr.dll'
+            - 'url.dll'
+            - 'shdocvw.dll'
+            - 'ieframe.dll'
+            - 'dfshim.dll'
+            - 'syssetup.dll'
+            - 'setupapi.dll'
+            - 'mshtml'
+    selection_lolbin_export:
+        CommandLine|contains:
+            - 'RegisterOCX'
+            - 'LaunchINFSection'
+            - 'LaunchApplication'
+            - 'RouteTheCall'
+            - 'OpenURL'
+            - 'FileProtocolHandler'
+            - 'ShOpenVerbApplication'
+            - 'SetupInfObjectInstallAction'
+            - 'InstallHinfSection'
+            - 'RunHTMLApplication'
+    # No library, no export, nothing to run. Both spellings appear in real data,
+    # with and without the closing quote around the image path.
+    selection_no_arguments:
+        - CommandLine|endswith: 'rundll32.exe'
+        - CommandLine|endswith: 'rundll32.exe"'
+    # Two deliberate omissions, both of them visible misses in the dataset:
+    #   shell32.dll,Control_RunDLL is how Windows opens every Control Panel
+    #   applet, so including it would mean an alert each time someone changes a
+    #   setting.
+    #   comsvcs.dll,MiniDump is rundll32 as well, but the behaviour is dumping
+    #   LSASS. It belongs in a credential access rule of its own.
+    condition: process_creation and rundll32_process and ((selection_lolbin_dll and selection_lolbin_export) or selection_no_arguments)
+falsepositives:
+    - Opening an internet shortcut, which the shell handles through rundll32 and
+      url.dll or ieframe.dll
+    - Installers and driver packages that register components through
+      LaunchINFSection or InstallHinfSection
+level: medium
+ruletype: Sigma
