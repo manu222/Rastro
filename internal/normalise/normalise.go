@@ -28,11 +28,14 @@
 package normalise
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -54,9 +57,16 @@ const (
 	// as %%1833. It is never converted: the number is an index, and rendering
 	// it as an integer would turn a label into arithmetic.
 	FormMessageRef
+	// FormBinary is a blob — a security descriptor, a token — written as
+	// upper-case hexadecimal, which is how Windows renders it.
+	FormBinary
 	// FormStructured is a nested value. It is kept as compact JSON so that the
 	// report can still show it, and rules can still match text inside it.
 	FormStructured
+	// FormReal is a number with a fractional part: a file time in seconds, a
+	// duration in milliseconds. It exists because refusing every float was
+	// wrong — see asReal.
+	FormReal
 )
 
 func (f Form) String() string {
@@ -71,8 +81,12 @@ func (f Form) String() string {
 		return "bool"
 	case FormMessageRef:
 		return "message_ref"
+	case FormBinary:
+		return "binary"
 	case FormStructured:
 		return "structured"
+	case FormReal:
+		return "real"
 	default:
 		return "undeclared"
 	}
@@ -156,6 +170,15 @@ func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
 		return Result{Text: "", Declared: form != FormUnset}, nil
 	}
 
+	// Binary values keep the rendering Windows uses for them.
+	if b, ok := asBytes(v); ok {
+		text := strings.ToUpper(hex.EncodeToString(b))
+		if form == FormUnset {
+			n.note(producer, field, "binary", form, truncate(text))
+		}
+		return Result{Text: text, Declared: form != FormUnset, Restored: true}, nil
+	}
+
 	switch val := v.(type) {
 	case bool:
 		if form == FormUnset {
@@ -163,7 +186,7 @@ func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
 		}
 		return Result{Text: strconv.FormatBool(val), Declared: form != FormUnset, Restored: true}, nil
 
-	case map[string]any, []any:
+	case map[string]any:
 		raw, err := json.Marshal(val)
 		if err != nil {
 			return Result{}, fmt.Errorf("%s.%s: cannot render nested value: %w", producer, field, err)
@@ -174,9 +197,43 @@ func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
 		return Result{Text: string(raw), Declared: form != FormUnset, Restored: true}, nil
 	}
 
+	// A list of plain values — several Data elements under one name, which is
+	// how some providers write a multi-part message. They are joined with
+	// newlines rather than encoded as JSON, because JSON escapes backslashes
+	// and a rule looking for C:\Windows inside a field would stop matching the
+	// moment the value went through an encoder.
+	if list, ok := asScalarList(v); ok {
+		text := strings.Join(list, "\n")
+		if form == FormUnset {
+			n.note(producer, field, "list", form, truncate(text))
+		}
+		return Result{Text: text, Declared: form != FormUnset, Restored: true}, nil
+	}
+
+	// A number with a fractional part, which is a different problem from a
+	// number that lost precision. 1290255420.401 is a file time with
+	// milliseconds: a value the provider really wrote, and one this package used
+	// to discard because the float check asked whether the value had decimals
+	// instead of asking whether anything had been lost.
+	if text, ok := asReal(v); ok {
+		if form != FormReal && form != FormText {
+			// Either nobody declared the field, or it was declared as something
+			// a fractional number cannot be. The value goes out as written and
+			// the audit says which of the two it was.
+			n.note(producer, field, "real", form, text)
+		}
+		return Result{Text: text, Declared: form != FormUnset, Restored: true}, nil
+	}
+
 	u, signed, err := asInteger(v)
 	if err != nil {
-		return Result{}, fmt.Errorf("%s.%s: %w", producer, field, err)
+		// A value that cannot be rendered exactly must not cost the whole
+		// record. The evidence is what matters, and one awkward field is a
+		// reason to flag that field, not to drop an event an analyst may need.
+		// The text is left empty on purpose: an approximate number in a report
+		// is worse than an absent one.
+		n.note(producer, field, fmt.Sprintf("%T", v), form, err.Error())
+		return Result{Declared: form != FormUnset}, nil
 	}
 
 	var text string
@@ -198,6 +255,48 @@ func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
 	return Result{Text: text, Declared: form != FormUnset, Restored: true}, nil
 }
 
+// asReal renders a number that has a fractional part, and reports whether the
+// value was one.
+//
+// The reason to distrust a float is lost precision in large integers — this
+// corpus contains 18446744073709551615, which a float64 turns into a number
+// that was never in the evidence. That is a property of magnitude, not of
+// decimals, and treating the two as the same thing threw away four perfectly
+// good file times. Only an *integral* float beyond the exactly representable
+// range is suspect, and that case stays with asInteger.
+//
+// A json.Number is returned as the decoder read it. Those digits have not been
+// through a float64 at all, so they are the most faithful rendering available;
+// re-parsing them to print them again could only lose something.
+func asReal(v any) (string, bool) {
+	if num, ok := v.(json.Number); ok {
+		s := num.String()
+		if !strings.ContainsAny(s, ".eE") {
+			return "", false
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || f == math.Trunc(f) {
+			// An integral literal written in exponent form — 1e3 — is an
+			// integer, and asInteger is better placed to say so.
+			return "", false
+		}
+		return s, true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Float32, reflect.Float64:
+		f := rv.Float()
+		if math.IsNaN(f) || math.IsInf(f, 0) || f == math.Trunc(f) {
+			return "", false
+		}
+		// 'f' with precision -1 is the shortest text that reads back as the
+		// same float64, so nothing is added and nothing is rounded away.
+		return strconv.FormatFloat(f, 'f', -1, 64), true
+	}
+	return "", false
+}
+
 // asInteger widens whatever numeric type the parser produced, refusing the ones
 // that cannot be carried exactly.
 //
@@ -209,26 +308,6 @@ func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
 // option; the fix is to decode with json.Number, which this function accepts.
 func asInteger(v any) (u uint64, signed bool, err error) {
 	switch val := v.(type) {
-	case int:
-		return toUnsigned(int64(val))
-	case int8:
-		return toUnsigned(int64(val))
-	case int16:
-		return toUnsigned(int64(val))
-	case int32:
-		return toUnsigned(int64(val))
-	case int64:
-		return toUnsigned(val)
-	case uint:
-		return uint64(val), false, nil
-	case uint8:
-		return uint64(val), false, nil
-	case uint16:
-		return uint64(val), false, nil
-	case uint32:
-		return uint64(val), false, nil
-	case uint64:
-		return val, false, nil
 	case json.Number:
 		if n, e := strconv.ParseUint(val.String(), 10, 64); e == nil {
 			return n, false, nil
@@ -237,15 +316,30 @@ func asInteger(v any) (u uint64, signed bool, err error) {
 			return toUnsigned(n)
 		}
 		return 0, false, fmt.Errorf("value %q is not an integer", val.String())
-	case float64:
-		if val != math.Trunc(val) {
-			return 0, false, fmt.Errorf("value %v is not a whole number", val)
+	}
+
+	// Reflection rather than a longer type switch, for the same reason the
+	// flattener uses it: a parser may hand back a named type, and `case
+	// uint64:` does not match `type HexInt uint64`. The probe that started this
+	// project wrote that warning down; this is the code that heeds it.
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return toUnsigned(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return rv.Uint(), false, nil
+	case reflect.Float32, reflect.Float64:
+		f := rv.Float()
+		if f != math.Trunc(f) {
+			// asReal handles a real number; what is left here is NaN, which is
+			// not a number the provider wrote.
+			return 0, false, fmt.Errorf("value %v is not a number", f)
 		}
-		if math.Abs(val) > 1<<53 {
+		if math.Abs(f) > 1<<53 {
 			return 0, false, fmt.Errorf(
-				"value %v arrived as a float and is too large to be exact; decode with json.Number", val)
+				"value %v arrived as a float and is too large to be exact; decode with json.Number", f)
 		}
-		return toUnsigned(int64(val))
+		return toUnsigned(int64(f))
 	}
 	return 0, false, fmt.Errorf("value of type %T cannot be rendered", v)
 }
@@ -311,4 +405,48 @@ func truncate(s string) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// asBytes recognises a byte slice however it is named.
+func asBytes(v any) ([]byte, bool) {
+	if b, ok := v.([]byte); ok {
+		return b, true
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		return rv.Bytes(), true
+	}
+	return nil, false
+}
+
+// asScalarList reports whether v is a list whose every element renders as a
+// plain value, and returns those renderings.
+func asScalarList(v any) ([]string, bool) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil, false
+	}
+	out := make([]string, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		item := rv.Index(i).Interface()
+		switch val := item.(type) {
+		case string:
+			out = append(out, val)
+		case bool:
+			out = append(out, strconv.FormatBool(val))
+		case nil:
+			out = append(out, "")
+		default:
+			if text, ok := asReal(item); ok {
+				out = append(out, text)
+				continue
+			}
+			u, signed, err := asInteger(item)
+			if err != nil {
+				return nil, false
+			}
+			out = append(out, formatInteger(u, signed))
+		}
+	}
+	return out, true
 }

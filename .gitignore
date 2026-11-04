@@ -6,6 +6,8 @@ datasets-linux/
 # --- Analysis output ---
 *.csv
 reports/
+muestras.txt
+sysmon.txt
 
 # --- Compiled binaries ---
 /rastro

@@ -18,9 +18,13 @@
 package winevent
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/manu222/rastro/internal/normalise"
@@ -41,6 +45,11 @@ type Flat struct {
 
 	// Fields is what the rules see.
 	Fields map[string]string
+	// Skipped names System fields that could not be rendered at all. The
+	// record is kept: one field of an unusual type is a reason to flag that
+	// field, not to throw away evidence. Empty on every record of the pinned
+	// corpus.
+	Skipped []string
 	// Shadowed holds System values that an EventData field of the same name
 	// displaced. Rare — one record in the whole pinned corpus — but it is a
 	// value that was in the evidence, and dropping it silently is not an option.
@@ -93,31 +102,30 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 			// Absent is absent. Writing an empty string would make a rule
 			// testing for the field match on nothing.
 		case map[string]any:
-			// Two shapes live here. An element with attributes, such as
-			// Provider or Execution, and an element that has both a value and
-			// attributes, such as EventID when the provider sets Qualifiers.
-			if text, ok := v["#text"]; ok {
+			// An element with attributes, such as Provider or Execution, and
+			// sometimes one that has both a value and attributes, such as
+			// EventID when the provider sets Qualifiers.
+			if text, ok := elementText(v); ok {
 				if s, err := scalar(text); err == nil {
 					f.Fields[name] = s
 				}
 			}
-			if attrs, ok := v["#attributes"].(map[string]any); ok {
-				for an, av := range attrs {
-					s, err := scalar(av)
-					if err != nil {
-						continue
-					}
-					key := name + "_" + an
-					f.Fields[key] = s
-					if alias, ok := systemAliases[key]; ok {
-						f.Fields[alias] = s
-					}
+			for an, av := range elementAttributes(v) {
+				s, err := scalar(av)
+				if err != nil {
+					continue
+				}
+				key := name + "_" + an
+				f.Fields[key] = s
+				if alias, ok := systemAliases[key]; ok {
+					f.Fields[alias] = s
 				}
 			}
 		default:
 			s, err := scalar(raw)
 			if err != nil {
-				return Flat{}, fmt.Errorf("System.%s: %w", name, err)
+				f.Skipped = append(f.Skipped, name)
+				continue
 			}
 			f.Fields[name] = s
 		}
@@ -167,39 +175,63 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 		f.EventID = id
 	}
 	if ts := f.Fields["SystemTime"]; ts != "" {
-		// Windows writes seven fractional digits, which RFC 3339 accommodates.
-		t, err := time.Parse(time.RFC3339Nano, ts)
+		t, err := parseSystemTime(ts)
 		if err != nil {
-			return Flat{}, fmt.Errorf("SystemTime %q: %w", ts, err)
+			return Flat{}, err
 		}
-		f.Time = t.UTC()
+		f.Time = t
 	}
 	return f, nil
 }
 
 // scalar renders a System value. These are plain types: Windows does not put
 // provider-specific encodings in this block, so there is nothing to restore.
+//
+// The fallback uses reflection rather than widening the type switch, and that
+// is not a stylistic choice. A parser is free to return a named type — the EVTX
+// library used here declares `type HexInt uint64` and hands it back for fields
+// such as Keywords — and in Go a `case uint64:` does not match it. A record
+// full of named integers would fall through to the error, every record in the
+// file would be counted unreadable, and nothing would say why. That happened.
 func scalar(v any) (string, error) {
 	switch val := v.(type) {
+	case nil:
+		return "", nil
 	case string:
 		return val, nil
 	case bool:
 		return strconv.FormatBool(val), nil
 	case json.Number:
 		return val.String(), nil
-	case int:
-		return strconv.Itoa(val), nil
-	case int64:
-		return strconv.FormatInt(val, 10), nil
-	case uint64:
-		return strconv.FormatUint(val, 10), nil
-	case float64:
-		if val == float64(int64(val)) {
-			return strconv.FormatInt(int64(val), 10), nil
+	}
+
+	// Binary blobs — a security descriptor, a token, a hash — arrive as bytes.
+	// Windows writes them as hexadecimal in its own XML rendering, so that is
+	// what they are turned back into. Without this, 413 records in the pinned
+	// corpus were unreadable because one field of one provider was a []byte.
+	if b, ok := v.([]byte); ok {
+		return strings.ToUpper(hex.EncodeToString(b)), nil
+	}
+
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		return strings.ToUpper(hex.EncodeToString(rv.Bytes())), nil
+	}
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Bool:
+		return strconv.FormatBool(rv.Bool()), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10), nil
+	case reflect.Float32, reflect.Float64:
+		f := rv.Float()
+		if f == math.Trunc(f) && math.Abs(f) <= 1<<53 {
+			return strconv.FormatInt(int64(f), 10), nil
 		}
-		return strconv.FormatFloat(val, 'f', -1, 64), nil
-	case nil:
-		return "", nil
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
 	}
 	return "", fmt.Errorf("unexpected value of type %T", v)
 }
@@ -209,10 +241,56 @@ func attribute(block map[string]any, element, name string) string {
 	if !ok {
 		return ""
 	}
-	attrs, ok := e["#attributes"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	s, _ := attrs[name].(string)
+	s, _ := elementAttributes(e)[name].(string)
 	return s
+}
+
+// The two parsers this project has met disagree about how to write an XML
+// element that carries both a value and attributes.
+//
+// One keeps the XML vocabulary: {"#text": 3001, "#attributes": {"Qualifiers": 16384}}.
+// The other flattens the attributes into siblings of a key called Value:
+// {"Value": 3001, "Qualifiers": 16384}.
+//
+// Neither is wrong, and which one shows up is a property of the library rather
+// than of the evidence — the same lesson as an access mask arriving as a number
+// instead of as text, one level up. Both are accepted here, because the
+// alternative is a reader that works until somebody changes a dependency.
+func elementText(e map[string]any) (any, bool) {
+	if v, ok := e["#text"]; ok {
+		return v, true
+	}
+	if v, ok := e["Value"]; ok {
+		return v, true
+	}
+	return nil, false
+}
+
+func elementAttributes(e map[string]any) map[string]any {
+	if attrs, ok := e["#attributes"].(map[string]any); ok {
+		return attrs
+	}
+	// The flattened shape: everything that is not the element's own value.
+	out := make(map[string]any, len(e))
+	for k, v := range e {
+		if k == "Value" || k == "#text" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// parseSystemTime accepts the two spellings of the same instant that the
+// parsers produce: the timestamp Windows writes, and seconds since the Unix
+// epoch, which is what one library hands back after decoding it.
+func parseSystemTime(ts string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+		return t.UTC(), nil
+	}
+	if secs, err := strconv.ParseFloat(ts, 64); err == nil {
+		whole, frac := math.Modf(secs)
+		return time.Unix(int64(whole), int64(frac*float64(time.Second))).UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("SystemTime %q is neither a timestamp nor a number of seconds", ts)
 }

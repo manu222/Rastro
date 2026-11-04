@@ -83,15 +83,108 @@ func TestLargestUnsignedValueIsNotCorrupted(t *testing.T) {
 	}
 }
 
-// The same value as a float64 must be refused rather than rounded. A wrong
-// number in a report is worse than a missing one.
-func TestFloatThatCannotBeExactIsRefused(t *testing.T) {
+// A value that cannot be carried exactly is dropped and recorded, not rounded
+// and not fatal. Two properties matter here and they pull in opposite
+// directions: no wrong number ever reaches a report, and no record is lost
+// because one of its fields was awkward.
+func TestFloatThatCannotBeExactIsDroppedAndRecorded(t *testing.T) {
 	n := Default()
-	if _, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", float64(1<<64-1)); err == nil {
-		t.Error("a float64 too large to be exact was accepted; it would have reported 18446744073709551616")
+
+	got, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", float64(1<<64-1))
+	if err != nil {
+		t.Fatalf("an imprecise value killed the record: %v", err)
 	}
-	if _, err := n.Render(sysmon, "SourcePort", float64(49158)); err != nil {
-		t.Errorf("a float64 small enough to be exact was refused: %v", err)
+	if got.Text != "" {
+		t.Errorf("an approximate number was reported: %q (the true value is 18446744073709551615)", got.Text)
+	}
+	if len(gapsFor(n, "bandwidthLimit")) != 1 {
+		t.Errorf("the loss was not recorded: %+v", n.Gaps())
+	}
+
+	got, err = n.Render(sysmon, "SourcePort", float64(49158))
+	if err != nil || got.Text != "49158" {
+		t.Errorf("a float64 small enough to be exact was mishandled: %q %v", got.Text, err)
+	}
+}
+
+// A number with decimals is not a number that lost something. The corpus has
+// fileTime = 1290255420.401, a file time with milliseconds, and an earlier
+// version of this package threw it away because the float check asked the wrong
+// question: it tested for decimals when what matters is precision.
+func TestNumberWithDecimalsIsKept(t *testing.T) {
+	n := Default()
+
+	got, err := n.Render("Microsoft-Windows-Bits-Client", "fileTime", float64(1290255420.401))
+	if err != nil {
+		t.Fatalf("a legitimate number was rejected: %v", err)
+	}
+	if got.Text != "1290255420.401" {
+		t.Errorf("want 1290255420.401, got %q", got.Text)
+	}
+
+	// Through json.Number the digits never see a float64, so what comes out is
+	// exactly what the file said — including trailing precision a float64 would
+	// have rewritten.
+	got, err = n.Render("Microsoft-Windows-Bits-Client", "fileTime", json.Number("1557670683.5895078"))
+	if err != nil {
+		t.Fatalf("json.Number with decimals was rejected: %v", err)
+	}
+	if got.Text != "1557670683.5895078" {
+		t.Errorf("the literal was not preserved: %q", got.Text)
+	}
+
+	// Undeclared, so it is still reported — but as a shape, not as a loss.
+	gaps := gapsFor(n, "fileTime")
+	if len(gaps) != 1 {
+		t.Fatalf("an undeclared real was not recorded: %+v", n.Gaps())
+	}
+	if gaps[0].Shape != "real" {
+		t.Errorf("recorded under the wrong shape: %+v", gaps[0])
+	}
+}
+
+// The distinction the fix above rests on: decimals are fine, magnitude is not.
+func TestLargeIntegralFloatIsStillRefused(t *testing.T) {
+	n := Default()
+	got, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", float64(1<<63))
+	if err != nil {
+		t.Fatalf("an imprecise value killed the record: %v", err)
+	}
+	if got.Text != "" {
+		t.Errorf("a number that cannot be exact was reported anyway: %q", got.Text)
+	}
+}
+
+// A field declared as real raises nothing: that is the whole point of declaring
+// it.
+func TestDeclaredRealIsNotAGap(t *testing.T) {
+	n := New(&Table{
+		Producer: "Microsoft-Windows-Bits-Client",
+		Fields:   map[string]Form{"fileTime": FormReal},
+	})
+	got, err := n.Render("Microsoft-Windows-Bits-Client", "fileTime", float64(1290255420.401))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Declared {
+		t.Error("a declared field was reported as undeclared")
+	}
+	if len(n.Gaps()) != 0 {
+		t.Errorf("a declared real was reported as a gap: %+v", n.Gaps())
+	}
+}
+
+// Several Data elements under one name arrive as a list. They are joined, not
+// JSON-encoded: a rule looking for a Windows path inside the value would stop
+// matching the moment backslashes were escaped.
+func TestListOfValuesIsJoinedWithoutEscaping(t *testing.T) {
+	n := Default()
+	got, err := n.Render("MSSQLSERVER", "Data", []string{"sa", `Reason: C:\Windows\x.exe`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "sa\nReason: C:\\Windows\\x.exe" {
+		t.Errorf("list rendering: %q", got.Text)
 	}
 }
 

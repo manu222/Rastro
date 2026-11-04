@@ -157,3 +157,94 @@ func TestFixturesRaiseNoUndeclaredFields(t *testing.T) {
 		t.Errorf("fields arrived in a shape nobody declared: %+v", gaps)
 	}
 }
+
+// The Go EVTX parser this project uses does not produce the shape the fixtures
+// above were captured in. It writes an element's own value under the key Value
+// and lifts the attributes up beside it, and it decodes SystemTime into
+// seconds since the Unix epoch rather than leaving the timestamp as text.
+//
+// This record is built to that shape rather than captured, because that parser
+// cannot be run where these tests were written. It is derived from the
+// library's own expansion code, and the first run of the reader against a real
+// file is what confirms it — if this test is passing and the reader still
+// produces nothing, this fixture is the first place to look.
+func TestGoParserShape(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider":      map[string]any{"Name": "Microsoft-Windows-Sysmon", "Guid": "{5770385f}"},
+				"EventID":       map[string]any{"Qualifiers": int64(0), "Value": int64(10)},
+				"Channel":       "Microsoft-Windows-Sysmon/Operational",
+				"Computer":      "MSEDGEWIN10",
+				"EventRecordID": int64(306346),
+				"TimeCreated":   map[string]any{"SystemTime": 1557670683.5895078},
+				"Execution":     map[string]any{"ProcessID": int64(2036), "ThreadID": int64(296)},
+			},
+			"EventData": map[string]any{
+				"SourceImage":   `C:\Users\Public\a.exe`,
+				"TargetImage":   `C:\Windows\system32\lsass.exe`,
+				"GrantedAccess": uint32(4112),
+			},
+		},
+	}
+
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.EventID != 10 {
+		t.Errorf("EventID from the Value key: want 10, got %d", f.EventID)
+	}
+	if f.Producer != "Microsoft-Windows-Sysmon" {
+		t.Errorf("provider from a flattened attribute: %q", f.Producer)
+	}
+	if f.Fields["ExecutionProcessID"] != "2036" {
+		t.Errorf("attribute alias missing: %v", f.Fields)
+	}
+	// The finding from the feasibility probe, now end to end: a mask that
+	// arrives as a number comes out as the text rule 1 matches against.
+	if f.Fields["GrantedAccess"] != "0x1010" {
+		t.Errorf("GrantedAccess: want 0x1010, got %q", f.Fields["GrantedAccess"])
+	}
+	if f.Time.IsZero() || f.Time.Year() != 2019 {
+		t.Errorf("epoch seconds not decoded: %s", f.Time)
+	}
+}
+
+// HexInt stands in for the named types a parser is free to return. The EVTX
+// library declares `type HexInt uint64` and hands it back for fields such as
+// Keywords.
+type HexInt uint64
+
+// A type switch on uint64 does not match a named type whose underlying type is
+// uint64. Getting this wrong made every record in the pinned corpus unreadable,
+// with nothing in the output to say why, so it gets a test of its own.
+func TestNamedIntegerTypesAreNotRejected(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider":      map[string]any{"Name": "Microsoft-Windows-Sysmon"},
+				"EventID":       map[string]any{"Value": HexInt(1)},
+				"Keywords":      HexInt(0x8000000000000000),
+				"EventRecordID": HexInt(42),
+				"Computer":      "MSEDGEWIN10",
+			},
+			"EventData": map[string]any{
+				"GrantedAccess": HexInt(4112),
+			},
+		},
+	}
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatalf("a named integer type made the whole record unreadable: %v", err)
+	}
+	if f.EventID != 1 {
+		t.Errorf("EventID: %d", f.EventID)
+	}
+	if f.Fields["Keywords"] != "9223372036854775808" {
+		t.Errorf("Keywords: %q", f.Fields["Keywords"])
+	}
+	if f.Fields["GrantedAccess"] != "0x1010" {
+		t.Errorf("GrantedAccess through a named type: %q", f.Fields["GrantedAccess"])
+	}
+}
