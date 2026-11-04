@@ -71,6 +71,11 @@ type Stats struct {
 	// SkippedFields counts fields that could not be rendered and were left out
 	// of records that were otherwise kept.
 	SkippedFields int
+	// Blocks counts the records whose values came from somewhere other than
+	// System and EventData, by block name. Two events in this corpus write
+	// their fields in UserData, and a block nobody has seen before should be
+	// visible rather than silently read.
+	Blocks map[string]int
 	// Stopped reports that a limit cut the walk short, so that a partial read
 	// is never mistaken for a complete one.
 	Stopped string
@@ -158,7 +163,7 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 				continue
 			}
 
-			ev, skipped, err := r.build(dict, rel, int64(rec.Header.RecordID))
+			ev, flat, err := r.build(dict, rel, int64(rec.Header.RecordID))
 			if err != nil {
 				stats.Unreadable++
 				if stats.FirstFailure == nil {
@@ -167,7 +172,13 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 				continue
 			}
 			stats.Records++
-			stats.SkippedFields += skipped
+			stats.SkippedFields += len(flat.Skipped)
+			for _, b := range flat.Blocks {
+				if stats.Blocks == nil {
+					stats.Blocks = map[string]int{}
+				}
+				stats.Blocks[b]++
+			}
 			if err := emit(ev); err != nil {
 				return stats, err
 			}
@@ -177,10 +188,10 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 }
 
 // build turns one parsed record into an event.
-func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*event.Event, int, error) {
+func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*event.Event, winevent.Flat, error) {
 	flat, err := winevent.Flatten(asMap(dict), r.Normaliser)
 	if err != nil {
-		return nil, 0, err
+		return nil, flat, err
 	}
 
 	e := &event.Event{
@@ -207,7 +218,7 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 	// class an event belongs to — is per event identifier and comes next. The
 	// reader deliberately stops at the host, so that the mapping tables are
 	// written against real output rather than alongside it.
-	return e, len(flat.Skipped), nil
+	return e, flat, nil
 }
 
 // producerOf names the source of a record the way an analyst would.

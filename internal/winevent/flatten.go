@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,10 @@ type Flat struct {
 	// field, not to throw away evidence. Empty on every record of the pinned
 	// corpus.
 	Skipped []string
+	// Blocks names the parts of the record other than System and EventData
+	// that values were read from, as "UserData/LogFileCleared". Most records
+	// have none.
+	Blocks []string
 	// Shadowed holds System values that an EventData field of the same name
 	// displaced. Rare — one record in the whole pinned corpus — but it is a
 	// value that was in the evidence, and dropping it silently is not an option.
@@ -141,28 +146,8 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 		// Some records carry no EventData at all. Twenty-six of them in the
 		// pinned corpus.
 	case map[string]any:
-		for name, raw := range data {
-			if name == "#attributes" {
-				if attrs, ok := raw.(map[string]any); ok {
-					for an, av := range attrs {
-						if s, err := scalar(av); err == nil {
-							f.Fields["EventData_"+an] = s
-						}
-					}
-				}
-				continue
-			}
-			res, err := n.Render(f.Producer, name, raw)
-			if err != nil {
-				return Flat{}, fmt.Errorf("EventData.%s: %w", name, err)
-			}
-			if old, clash := f.Fields[name]; clash {
-				if f.Shadowed == nil {
-					f.Shadowed = map[string]string{}
-				}
-				f.Shadowed[name] = old
-			}
-			f.Fields[name] = res.Text
+		if err := f.addData(n, "EventData", data); err != nil {
+			return Flat{}, err
 		}
 	default:
 		// Not a mapping. Keep it whole rather than guess at its structure.
@@ -172,6 +157,52 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 		}
 		f.Fields["EventData"] = string(raw)
 	}
+
+	// Windows does not put a provider's own values only in EventData. A handful
+	// of events — the two that say the log was cleared among them — write them
+	// in a UserData block instead, wrapped in one named element:
+	//
+	//	{"UserData": {"LogFileCleared": {"SubjectUserName": "bob", ...}}}
+	//
+	// Reading only System and EventData left those records with no actor at all,
+	// which for "somebody cleared the audit log" is the one thing worth knowing.
+	// So any other block the record carries is flattened the same way, and its
+	// name is recorded: a block nobody expected should show up in the audit
+	// rather than be dropped on the assumption that it is not interesting.
+	for name, raw := range ev {
+		switch name {
+		case "System", "EventData":
+			continue
+		case "#attributes":
+			// The Event element's own XML attributes: the schema namespace, and
+			// nothing a detection or a report has any use for.
+			continue
+		}
+		block, ok := raw.(map[string]any)
+		if !ok {
+			f.Skipped = append(f.Skipped, name)
+			continue
+		}
+		for inner, content := range block {
+			f.Blocks = append(f.Blocks, name+"/"+inner)
+			fields, ok := content.(map[string]any)
+			if !ok {
+				// A value directly under the block rather than an element of
+				// its own. Rendered under the inner name, which is what the
+				// provider called it.
+				res, err := n.Render(f.Producer, inner, content)
+				if err != nil {
+					return Flat{}, fmt.Errorf("%s.%s: %w", name, inner, err)
+				}
+				f.set(inner, res.Text)
+				continue
+			}
+			if err := f.addData(n, name+"."+inner, fields); err != nil {
+				return Flat{}, err
+			}
+		}
+	}
+	sort.Strings(f.Blocks)
 
 	f.Channel = f.Fields["Channel"]
 	f.Computer = f.Fields["Computer"]
@@ -231,6 +262,43 @@ func Unavailable(s string) bool {
 		return true
 	}
 	return false
+}
+
+// addData renders one block of the provider's own values into the flat view.
+// where names the block for error messages, so that a failure says which part
+// of the record it came from.
+func (f *Flat) addData(n *normalise.Normaliser, where string, data map[string]any) error {
+	for name, raw := range data {
+		if name == "#attributes" {
+			if attrs, ok := raw.(map[string]any); ok {
+				for an, av := range attrs {
+					if s, err := scalar(av); err == nil {
+						f.Fields["EventData_"+an] = s
+					}
+				}
+			}
+			continue
+		}
+		res, err := n.Render(f.Producer, name, raw)
+		if err != nil {
+			return fmt.Errorf("%s.%s: %w", where, name, err)
+		}
+		f.set(name, res.Text)
+	}
+	return nil
+}
+
+// set records a field, keeping whatever it displaced. A name that exists twice
+// in one record is rare — one in the whole pinned corpus — but it was a value
+// in the evidence, and silently losing it is not an option.
+func (f *Flat) set(name, text string) {
+	if old, clash := f.Fields[name]; clash {
+		if f.Shadowed == nil {
+			f.Shadowed = map[string]string{}
+		}
+		f.Shadowed[name] = old
+	}
+	f.Fields[name] = text
 }
 
 // scalar renders a System value. These are plain types: Windows does not put

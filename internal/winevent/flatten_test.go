@@ -327,6 +327,65 @@ func TestBlanksAreStillInTheFlatView(t *testing.T) {
 	}
 }
 
+// Two events in this corpus say the audit log was cleared — Security 1102 and
+// System 104 — and both write their fields in a UserData block instead of
+// EventData. Reading only System and EventData left them with no actor, which
+// on "somebody cleared the log" is the single thing worth knowing.
+//
+// The record below is built to the shape Windows documents rather than captured
+// from the corpus, for the same reason as TestGoParserShape: the dump that the
+// fixtures come from is produced by this package, and until this code read
+// UserData it could not show what was in there. The run against the real files
+// is what confirms it.
+func TestUserDataIsRead(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider": map[string]any{"Name": "Microsoft-Windows-Eventlog"},
+				"EventID":  int64(1102),
+				"Channel":  "Security",
+				"Computer": "DC1.insecurebank.local",
+			},
+			"UserData": map[string]any{
+				"LogFileCleared": map[string]any{
+					"SubjectUserName":   "bob",
+					"SubjectDomainName": "insecurebank",
+					"SubjectUserSid":    "S-1-5-21-738609754-2819869699-4189121830-1108",
+					"SubjectLogonId":    "0x8d6e9",
+				},
+			},
+		},
+	}
+
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Fields["SubjectUserName"] != "bob" {
+		t.Errorf("the account that cleared the log was lost: %v", f.Fields)
+	}
+	if f.Fields["SubjectUserSid"] == "" {
+		t.Error("SubjectUserSid is empty")
+	}
+	// The block is named, so that one nobody expected shows up in the audit
+	// instead of being dropped on the assumption that it is uninteresting.
+	if len(f.Blocks) != 1 || f.Blocks[0] != "UserData/LogFileCleared" {
+		t.Errorf("the block was not recorded: %v", f.Blocks)
+	}
+}
+
+// A record with nothing but System and EventData reports no extra blocks, so
+// that the audit line stays quiet on the 31,241 records that have none.
+func TestOrdinaryRecordHasNoExtraBlocks(t *testing.T) {
+	f, err := Flatten(load(t, "sysmon_process_creation"), normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Blocks) != 0 {
+		t.Errorf("blocks reported on an ordinary record: %v", f.Blocks)
+	}
+}
+
 // HexInt stands in for the named types a parser is free to return. The EVTX
 // library declares `type HexInt uint64` and hands it back for fields such as
 // Keywords.

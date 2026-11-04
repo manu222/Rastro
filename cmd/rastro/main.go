@@ -88,6 +88,7 @@ func run(root string) error {
 		skippedFields int
 		byChannel     = map[string]int{}
 		byTimeField   = map[string]int{}
+		blocks        = map[string]int{}
 		earliest      time.Time
 		latest        time.Time
 	)
@@ -133,6 +134,9 @@ func run(root string) error {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), err)
 			return nil
 		}
+		for name, n := range stats.Blocks {
+			blocks[name] += n
+		}
 		damaged += stats.DamagedChunks
 		unreadable += stats.Unreadable
 		skippedFields += stats.SkippedFields
@@ -169,6 +173,19 @@ func run(root string) error {
 	}
 	// Which field each event's time came from. A timeline built from two
 	// different meanings of "when" has to be able to say which it used where.
+	// Values read from somewhere other than System and EventData. Quiet on
+	// almost every record, and the two events that say the log was cleared
+	// depend on it entirely.
+	if len(blocks) > 0 {
+		names := make([]string, 0, len(blocks))
+		for name := range blocks {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Printf("Other blocks    : %-40s %d record(s)\n", name, blocks[name])
+		}
+	}
 	if n := byTimeField["UtcTime"]; n > 0 {
 		fmt.Printf("Provider's time : %d of %d record(s) state when the event happened\n", n, records)
 	}
