@@ -1,0 +1,44 @@
+# Test manifest for rules/linux/lnx_auditd_cron_persistence.yml
+#
+# Nine hits, and the honest part of this one is that most of them are a
+# logrotate job being written into /etc/cron.daily and friends — which is what
+# a package install looks like, not an attack. That is the nature of the
+# signal: cron directories are written by legitimate software all the time, and
+# the rule is medium rather than high because of it.
+#
+# The manifest keeps them anyway. They prove the rule sees writes to the cron
+# directories, which is the behaviour, and a corpus where every hit is already
+# malicious would prove less.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/linux/lnx_auditd_cron_persistence.yml
+rule_id: b7e3d018-5f26-4c9b-a0d4-3e81f6c25b77
+engine: zircolite
+
+dataset:
+  repo: https://github.com/splunk/attack_data
+  commit: c8af10d015d392fca97f9eb65181e9f06bc18e40
+  license: Apache-2.0
+  note: >-
+    referenced, not redistributed. The samples are stored with Git LFS, so they
+    are fetched one by one by pinned commit rather than cloned; see
+    scripts/fetch-linux-samples.
+
+expect:
+  - file: linux_auditd_cron_file_audited2.log
+    hits: 8
+    note: >-
+      Files written under /etc/cron.daily, .hourly, .weekly and .monthly. The
+      capture holds nineteen path records in total; the other eleven are the
+      PARENT entries auditd emits for the containing directory on the same
+      syscall, and counting those would double every detection.
+
+  - file: linux_auditd_crontab_edit.log
+    hits: 1
+    note: >-
+      A user crontab edited. What shows up is the rename performed by
+      /usr/bin/crontab, because the tool writes a temporary copy and moves it
+      over the spool file rather than editing it in place.
+
+total: 9

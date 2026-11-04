@@ -1,0 +1,26 @@
+# Test manifest for rules/windows/pipe_created_win_psexec_service_pipes.yml
+#
+# A single capture, deliberately chosen: it is a PsExec service that has been
+# RENAMED to svchost. A rule written against the name PSEXESVC finds nothing
+# here, and this manifest exists to prove the rule does not depend on it.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/windows/pipe_created_win_psexec_service_pipes.yml
+rule_id: 8f41b60d-39c7-4a52-9e13-6b2f0a8c7d35
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Defense Evasion/DE_renamed_psexec_service_sysmon_17_18.evtx
+    hits: 6
+    note: >-
+      The three stream pipes, each appearing as a creation and as a connection:
+      svchost-MSEDGEWIN10-8116-stdin, -stdout and -stderr. The prefix is the
+      renamed service; the suffixes are what the program always writes.
+
+total: 6

@@ -1,0 +1,32 @@
+# Linux evidence used by the rules in rules/linux/, pinned to one commit of
+# splunk/attack_data (Apache-2.0).
+#
+# The samples are not copied into this repository. They are also not cloned:
+# that repository keeps its logs in Git LFS, so a plain clone brings down
+# pointer files instead of data, and a `git lfs pull` needs the client and
+# counts against the upstream project's bandwidth. Each file is fetched on its
+# own over plain HTTPS from the media endpoint, at the commit below, which
+# needs nothing but curl and cannot drift.
+#
+# The files land flat in datasets-linux/ under their own names. Zircolite
+# reports a match by file name rather than by path, so the names have to stay
+# unique — add a sample whose name collides with one already here and the
+# manifests become ambiguous.
+#
+# Format: one repository path per line. Blank lines and # are ignored.
+
+commit c8af10d015d392fca97f9eb65181e9f06bc18e40
+
+# Dynamic linker hijacking: LD_PRELOAD on the command line, and the preload file
+datasets/attack_techniques/T1574.006/linux_auditd_ldpreload/auditd_execve_ldpreload.log
+datasets/attack_techniques/T1574.006/linux_auditd_ldpreload/linux_auditd_ldpreload.log
+datasets/attack_techniques/T1574.006/linux_auditd_preload_file/linux_auditd_preload_file.log
+
+# Cron persistence: files dropped in the cron directories, and a crontab edit
+datasets/attack_techniques/T1053.003/linux_auditd_cron_file_audited/linux_auditd_cron_file_audited2.log
+datasets/attack_techniques/T1053.003/linux_auditd_crontab_edit/linux_auditd_crontab_edit.log
+
+# Security services stopped
+datasets/attack_techniques/T1489/linux_auditd_auditd_service_stop/linux_auditd_auditd_service_stop.log
+datasets/attack_techniques/T1489/linux_auditd_osquerd_service_stop/linux_auditd_osquerd_service_stop.log
+datasets/attack_techniques/T1489/linux_auditd_sysmon_service_stop/linux_auditd_sysmon_service_stop.log

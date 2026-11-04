@@ -1,0 +1,33 @@
+# Test manifest for rules/windows/win_security_dcsync_replication.yml
+#
+# Three requests for replication rights by the Administrator account, which is
+# exactly the shape of the attack: a user asking for a right that only domain
+# controllers have any business asking for.
+#
+# Read the negative control number before touching the exclusion. Six events in
+# this dataset request these rights and half of them come from computer
+# accounts doing ordinary replication, so the exclusion is carrying real weight
+# rather than being decorative.
+
+rule: rules/windows/win_security_dcsync_replication.yml
+rule_id: 5c0a9e74-3b81-42d6-8f27-91ae6d4c08b3
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Credential Access/CA_DCSync_4662.evtx
+    hits: 3
+    note: >-
+      DS-Replication-Get-Changes requested by insecurebank\Administrator. The
+      Properties field carries the right's identifier alongside the access mask
+      and the object class, which is why the rule matches the text rather than
+      comparing the whole field.
+
+negative_control:
+  min_hits_without_filters: 6
+
+total: 3

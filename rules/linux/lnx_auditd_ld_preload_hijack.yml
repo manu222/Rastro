@@ -1,0 +1,54 @@
+title: Dynamic Linker Hijacking Via LD_PRELOAD
+id: 4a1f7c2e-9b05-4d3a-8e61-5c7f0b2d9a44
+status: experimental
+description: |
+    Detects the two halves of a dynamic linker hijack: a library forced into a
+    process through the LD_PRELOAD environment variable, and a write to
+    /etc/ld.so.preload, which does the same thing for every process started on
+    the host.
+
+    The attraction of this technique is that the payload never has to be a
+    process of its own. The code runs inside a program the host already trusts,
+    which is what makes process-name and hash based detection useless here.
+
+    What the attacker cannot avoid is the declaration. The loader has to be told
+    which library to load before the program starts, and there are only two
+    places to say it: the environment of the command, which auditd records as an
+    argument, and the preload file, whose path is fixed. Both are in this rule.
+references:
+    - https://attack.mitre.org/techniques/T1574/006/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.stealth
+    - attack.t1574.006
+logsource:
+    product: linux
+    service: auditd
+detection:
+    # auditd splits a command into one field per argument: a0, a1, a2 and so on.
+    # There is no single field holding the whole command line, so the variable
+    # has to be looked for in each position separately. Six covers the samples
+    # and ordinary invocations; a command that buries it further along would be
+    # missed, which is why the preload file below is the sturdier half.
+    selection_preload_env:
+        type: EXECVE
+    selection_preload_env_arg:
+        - a0|startswith: 'LD_PRELOAD='
+        - a1|startswith: 'LD_PRELOAD='
+        - a2|startswith: 'LD_PRELOAD='
+        - a3|startswith: 'LD_PRELOAD='
+        - a4|startswith: 'LD_PRELOAD='
+        - a5|startswith: 'LD_PRELOAD='
+    # The file half. startswith rather than an exact match on purpose: editors
+    # and shell redirection leave temporary siblings such as ld.so.preload~, and
+    # those writes are the same act.
+    selection_preload_file:
+        type: PATH
+        name|startswith: '/etc/ld.so.preload'
+    condition: (selection_preload_env and selection_preload_env_arg) or selection_preload_file
+falsepositives:
+    - Debugging and profiling tools, which legitimately preload libraries to
+      intercept calls
+    - Commercial agents that instrument processes through the preload file
+level: high

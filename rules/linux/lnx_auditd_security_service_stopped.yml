@@ -1,0 +1,51 @@
+title: Security Service Stopped
+id: c9a4b2f7-61d8-4e35-9f02-7a3c5e8d1b60
+status: experimental
+description: |
+    Detects a service whose job is to watch the host being stopped: the audit
+    daemon itself, an endpoint sensor, or a host intrusion detection agent.
+
+    Stopping the sensor is cheaper for an attacker than evading it, and it is
+    usually the last thing done before the noisy part of the intrusion starts.
+    The reason it stays detectable is that systemd reports the stop through the
+    audit subsystem before the audit daemon goes away, so the record announcing
+    the silence survives it.
+
+    This rule cares about which service was stopped, not about how. A stop
+    issued through systemctl, through the service wrapper or directly by the
+    init system produces the same SERVICE_STOP record.
+references:
+    - https://attack.mitre.org/techniques/T1685/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.defense-impairment
+    - attack.t1685
+logsource:
+    product: linux
+    service: auditd
+detection:
+    # The unit list is the weak half of this rule and ages like any list: a
+    # sensor deployed under a name that is not here will be stopped unseen. It
+    # is kept deliberately short and limited to units whose only purpose is
+    # monitoring, because a broader list would turn every ordinary service
+    # restart into an alert.
+    selection:
+        type: SERVICE_STOP
+        unit:
+            - 'auditd'
+            - 'sysmon'
+            - 'osqueryd'
+            - 'falco'
+            - 'wazuh-agent'
+            - 'filebeat'
+            - 'auoms'
+            - 'clamav-daemon'
+            - 'rsyslog'
+    condition: selection
+falsepositives:
+    - Planned maintenance, upgrades and reboots, which stop every service on the
+      host including these
+    - Configuration management replacing an agent, which stops it before
+      installing the new version
+level: high

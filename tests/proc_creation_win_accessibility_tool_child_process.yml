@@ -1,0 +1,41 @@
+# Test manifest for rules/windows/proc_creation_win_accessibility_tool_child_process.yml
+#
+# Two hits in two captures of the same technique recorded on different hosts.
+# The second one is worth reading before changing anything: its parent is
+# "c:\osk.exe", a copy of the on-screen keyboard planted in the root of the
+# system drive rather than the real one in System32. The rule matches it
+# because it ends the parent path at the file name instead of demanding the
+# System32 path, and that is the whole point — a hijack often involves putting
+# a different file where the tool used to be.
+
+rule: rules/windows/proc_creation_win_accessibility_tool_child_process.yml
+rule_id: 2d8e5c91-7a43-4f06-b5e8-14c9ad037e2b
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Persistence/persistence_accessibility_features_osk_sysmon1.evtx
+    hits: 1
+    note: >-
+      The logon screen chain in full: utilman.exe /debug starts osk.exe as
+      SYSTEM, and osk.exe then starts whoami. The first step is excluded as
+      ordinary accessibility behaviour, the second is the detection.
+
+  - file: Persistence/persistence_sysmon_11_13_1_shime_appfix.evtx
+    hits: 1
+    note: >-
+      The same ending reached through a shim database rather than the logon
+      screen, with a planted c:\osk.exe as the parent.
+
+# With the exclusion neutralised the rule matches twelve events, the extra ten
+# being the accessibility menu starting the tools it is meant to start. The
+# control proves the selection works; the gap between 2 and 12 is the measure
+# of how much this one exclusion is holding back.
+negative_control:
+  min_hits_without_filters: 12
+
+total: 2

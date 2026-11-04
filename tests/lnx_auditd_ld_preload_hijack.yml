@@ -1,0 +1,45 @@
+# Test manifest for rules/linux/lnx_auditd_ld_preload_hijack.yml
+#
+# The first Linux manifest in this repository, and it runs through a different
+# engine: Hayabusa reads EVTX and nothing else, so Linux rules are executed by
+# Zircolite against the auditd corpus. The engine field below is what tells the
+# harness which one to use.
+#
+# Ten hits over three captures, split across the rule's two halves: four are
+# the variable passed on a command line, six are writes to the preload file.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/linux/lnx_auditd_ld_preload_hijack.yml
+rule_id: 4a1f7c2e-9b05-4d3a-8e61-5c7f0b2d9a44
+engine: zircolite
+
+dataset:
+  repo: https://github.com/splunk/attack_data
+  commit: c8af10d015d392fca97f9eb65181e9f06bc18e40
+  license: Apache-2.0
+  note: >-
+    referenced, not redistributed. The samples are stored with Git LFS, so they
+    are fetched one by one by pinned commit rather than cloned; see
+    scripts/fetch-linux-samples.
+
+expect:
+  - file: auditd_execve_ldpreload.log
+    hits: 3
+    note: >-
+      sudo LD_PRELOAD=./myfopen.so ./prog, recorded three times. The variable
+      lands in a1 here, which is why the rule looks at several argument
+      positions instead of one.
+
+  - file: linux_auditd_ldpreload.log
+    hits: 1
+    note: The same command in a capture that uses epoch timestamps instead of a formatted date.
+
+  - file: linux_auditd_preload_file.log
+    hits: 6
+    note: >-
+      /etc/ld.so.preload being written, deleted and recreated, together with the
+      editor's ld.so.preload~ sibling. Matching the path by prefix is what
+      catches the temporary file.
+
+total: 10

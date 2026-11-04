@@ -1,0 +1,46 @@
+title: Process Memory Dumped Through comsvcs.dll
+id: 6b3d82a5-0f47-4ce9-b21a-7d85c3f6e049
+status: experimental
+description: |
+    Detects a process being dumped to disk through the MiniDump export of
+    comsvcs.dll, a library that ships with Windows and is signed by Microsoft.
+    Aimed at the memory of the process that holds credentials, it produces the
+    same file a dedicated dumping tool would, without any tool having to reach
+    the host.
+
+    Keyed on the pair of library and export, which is what the technique needs
+    and cannot leave out. The binary that loads the library is not part of the
+    match, so renaming rundll32 does not help, and neither does loading the
+    library from somewhere else.
+
+    Note that the rule reports the dumping of any process, not only the one
+    holding credentials. That is deliberate: the target is an argument, and
+    treating a different target as uninteresting would hand over an easy
+    evasion.
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.credential-access
+    - attack.t1003.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    # Both terms are required and matched independently of each other, so the
+    # space that the caller may or may not leave after the comma makes no
+    # difference.
+    selection:
+        CommandLine|contains|all:
+            - 'comsvcs.dll'
+            - 'MiniDump'
+    condition: process_creation and selection
+falsepositives:
+    - A crash reporting or support tool that collects a memory dump the same
+      way, which is rare but does exist
+level: high
+ruletype: Sigma

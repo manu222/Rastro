@@ -1,0 +1,33 @@
+# Test manifest for rules/windows/proc_creation_win_comsvcs_minidump_process_dump.yml
+#
+# One hit, and the sample does not dump LSASS: it dumps notepad. Whoever
+# recorded it used a harmless target to demonstrate the technique, which is
+# lucky, because it tests exactly what the rule claims — that the detection is
+# the use of comsvcs.dll MiniDump, not the identity of the target. A rule that
+# required lsass.exe would pass its own review and fail on this capture.
+#
+# This rule and the rundll32 proxy execution rule deliberately do not overlap:
+# comsvcs is left out of that one's library list because the behaviour here is
+# credential access rather than proxy execution, and the two deserve separate
+# alerts.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/windows/proc_creation_win_comsvcs_minidump_process_dump.yml
+rule_id: 6b3d82a5-0f47-4ce9-b21a-7d85c3f6e049
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Credential Access/sysmon_10_1_memdump_comsvcs_minidump.evtx
+    hits: 1
+    note: >-
+      rundll32 calling comsvcs.dll MiniDump against a process id, started by
+      WmiPrvSE — the command arrived over WMI. Note the space after the comma
+      in the command line, which is why the two terms are matched separately.
+
+total: 1

@@ -1,0 +1,59 @@
+title: Scheduled Task Persistence Through Cron
+id: b7e3d018-5f26-4c9b-a0d4-3e81f6c25b77
+status: experimental
+description: |
+    Detects a job being planted in cron, either as a file dropped into one of
+    the system cron directories or through an edit of a user crontab.
+
+    Cron is attractive because it needs nothing installed and survives reboots
+    on its own. The job runs as whatever user owns the crontab, and from then on
+    the attacker needs no access to the host to keep executing.
+
+    The file has to land in a directory cron reads, and those directories are
+    fixed by the distribution rather than chosen by the attacker. That is the
+    part this rule keys on. A user crontab is a special case because the editor
+    writes a temporary file and renames it into place, so what shows up is the
+    rename performed by the crontab binary rather than a write to the final
+    path.
+references:
+    - https://attack.mitre.org/techniques/T1053/003/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.persistence
+    - attack.t1053.003
+logsource:
+    product: linux
+    service: auditd
+detection:
+    # A file written into a directory cron reads. nametype tells apart the file
+    # itself from the directory it sits in: auditd emits a PARENT record for the
+    # containing directory on the same syscall, and counting both would double
+    # every detection. CREATE is a new file, NORMAL an existing one being
+    # written to, and an attacker appending to an existing job uses the second.
+    selection_cron_dir:
+        type: PATH
+        name|startswith:
+            - '/etc/cron.d/'
+            - '/etc/cron.hourly/'
+            - '/etc/cron.daily/'
+            - '/etc/cron.weekly/'
+            - '/etc/cron.monthly/'
+            - '/etc/crontab'
+            - '/var/spool/cron/'
+        nametype:
+            - 'CREATE'
+            - 'NORMAL'
+    # A user crontab being edited. The crontab binary never writes the spool
+    # file in place: it prepares a temporary copy and renames it over the
+    # original, so the rename is the event that marks the change.
+    selection_crontab_edit:
+        type: SYSCALL
+        exe|endswith: '/crontab'
+        SYSCALL: 'rename'
+    condition: 1 of selection_*
+falsepositives:
+    - Package installation and updates, which drop maintenance jobs into the
+      same directories — logrotate is the usual one
+    - Configuration management agents writing scheduled jobs by policy
+level: medium

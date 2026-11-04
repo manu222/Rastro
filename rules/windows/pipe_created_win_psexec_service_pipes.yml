@@ -1,0 +1,48 @@
+title: PsExec Style Service Pipes
+id: 8f41b60d-39c7-4a52-9e13-6b2f0a8c7d35
+status: experimental
+description: |
+    Detects the named pipes that a PsExec style remote execution service creates
+    to carry the standard input, output and error of the command it runs.
+
+    Renaming the service binary is the first thing anyone does to get PsExec
+    past a detection, and it works against any rule that looks for the name
+    PSEXESVC. The pipe names survive the rename, because the service builds them
+    from a fixed pattern of its own: a prefix, the host name, the process
+    identifier and the stream.
+
+    So the rule keys on the shape rather than the name. The prefix can be
+    anything the operator chooses, and in the sample it is svchost; the three
+    stream suffixes cannot change without changing the program.
+references:
+    - https://attack.mitre.org/techniques/T1569/002/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.execution
+    - attack.t1569.002
+logsource:
+    category: pipe_created
+    product: windows
+detection:
+    # 17 is a pipe being created, 18 a process connecting to one. Both are kept:
+    # the create tells you the service started, the connect tells you something
+    # attached to it, and in a remote execution the two happen on different
+    # processes.
+    pipe_event:
+        EventID:
+            - 17
+            - 18
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        PipeName|endswith:
+            - '-stdin'
+            - '-stdout'
+            - '-stderr'
+    condition: pipe_event and selection
+falsepositives:
+    - Administrators running PsExec itself, which is a legitimate Sysinternals
+      tool and produces exactly these pipes
+    - Remote management software built on the same service pattern
+level: high
+ruletype: Sigma

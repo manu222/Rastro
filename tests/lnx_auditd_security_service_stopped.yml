@@ -1,0 +1,49 @@
+# Test manifest for rules/linux/lnx_auditd_security_service_stopped.yml
+#
+# Twenty-one hits over three captures — and a blind spot that is worth more
+# than the hits.
+#
+# The auditd service stop capture holds eight records. Five are detected. The
+# other three are not, and the rule is not at fault: those three are written as
+#     msg='unit= auditd comm="systemd" ...'
+# with a space after the equals sign, and the auditd parser does not produce a
+# unit field for them at all. The rule cannot match a field that was never
+# extracted.
+#
+# It is kept here on purpose rather than quietly rounded to eight, because it
+# is the honest shape of the problem: a detection pipeline is only as good as
+# the parser underneath it, and three events out of eight in a single sample is
+# a large enough fraction that nobody should discover it by accident.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/linux/lnx_auditd_security_service_stopped.yml
+rule_id: c9a4b2f7-61d8-4e35-9f02-7a3c5e8d1b60
+engine: zircolite
+
+dataset:
+  repo: https://github.com/splunk/attack_data
+  commit: c8af10d015d392fca97f9eb65181e9f06bc18e40
+  license: Apache-2.0
+  note: >-
+    referenced, not redistributed. The samples are stored with Git LFS, so they
+    are fetched one by one by pinned commit rather than cloned; see
+    scripts/fetch-linux-samples.
+
+expect:
+  - file: linux_auditd_auditd_service_stop.log
+    hits: 5
+    note: >-
+      The audit daemon and sysmon stopped. Five of the eight records in this
+      capture carry a parsable unit field; the three written as 'unit= auditd'
+      with a space do not, and are invisible to any rule that matches on unit.
+
+  - file: linux_auditd_osquerd_service_stop.log
+    hits: 8
+    note: osqueryd stopped, eight times.
+
+  - file: linux_auditd_sysmon_service_stop.log
+    hits: 8
+    note: Sysmon for Linux stopped, eight times.
+
+total: 21

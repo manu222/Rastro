@@ -1,0 +1,61 @@
+title: Child Process Of A Windows Accessibility Tool
+id: 2d8e5c91-7a43-4f06-b5e8-14c9ad037e2b
+status: experimental
+description: |
+    Detects a process started by one of the Windows accessibility tools. Those
+    tools are launched from the logon screen before anyone has authenticated,
+    and they run as SYSTEM, which is what makes them worth hijacking: replace
+    one, or point its Image File Execution Options debugger at a shell, and the
+    logon screen hands out a SYSTEM console to whoever can reach the keyboard.
+
+    The rule does not look at how the hijack was installed, because there are
+    several ways and they leave different traces. It looks at the consequence
+    that all of them share: an accessibility tool becomes the parent of a
+    process. These are user interface helpers. A working one spawns nothing.
+
+    One exception is legitimate and is excluded below, which leaves a blind
+    spot: a hijack that makes one accessibility tool launch another would not be
+    reported.
+references:
+    - https://attack.mitre.org/techniques/T1546/008/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.persistence
+    - attack.t1546.008
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        ParentImage|endswith:
+            - '\sethc.exe'
+            - '\utilman.exe'
+            - '\osk.exe'
+            - '\magnify.exe'
+            - '\narrator.exe'
+            - '\displayswitch.exe'
+            - '\atbroker.exe'
+    # Utilman is the accessibility menu: launching another accessibility tool is
+    # its actual job, and the pair appears on every normal logon screen. The
+    # exclusion is written as a child that is itself an accessibility tool
+    # rather than as the utilman-to-osk pair, because the menu can start any of
+    # them.
+    filter_main_accessibility_chain:
+        Image|endswith:
+            - '\sethc.exe'
+            - '\utilman.exe'
+            - '\osk.exe'
+            - '\magnify.exe'
+            - '\narrator.exe'
+            - '\displayswitch.exe'
+            - '\atbroker.exe'
+    condition: process_creation and selection and not 1 of filter_main_*
+falsepositives:
+    - Assistive technology from a third party that drives these tools and is
+      started by them
+level: high
+ruletype: Sigma

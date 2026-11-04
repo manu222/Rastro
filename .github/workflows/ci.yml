@@ -10,6 +10,7 @@ on:
 env:
   HAYABUSA_VERSION: 4.0.0
   DATASET_COMMIT: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  ZIRCOLITE_VERSION: v4.7.1
 
 jobs:
   rules:
@@ -46,6 +47,16 @@ jobs:
           chmod +x tools/hayabusa/hayabusa-*
           tools/hayabusa/hayabusa-${HAYABUSA_VERSION}-lin-x64-musl help | head -2
 
+      # Hayabusa reads EVTX and nothing else, so the Linux rules need a second
+      # engine. Zircolite is cloned rather than installed from a package index
+      # because it reads its field mapping from the config directory that ships
+      # with the repository; the package alone leaves the mapping behind.
+      - name: Install Zircolite
+        run: |
+          git clone --quiet --depth 1 --branch "${ZIRCOLITE_VERSION}" \
+            https://github.com/wagga40/Zircolite.git tools/zircolite
+          pip install --disable-pip-version-check ./tools/zircolite
+
       # Only the folders the manifests reference, at the pinned commit.
       - name: Fetch attack samples
         run: |
@@ -56,6 +67,12 @@ jobs:
           git sparse-checkout set \
             "Execution" "Initial Access" "Defense Evasion" "Persistence" "Credential Access"
           echo "Samples fetched: $(find . -name '*.evtx' | wc -l)"
+
+      # The Linux samples are kept in Git LFS upstream, so a clone would bring
+      # down pointer files instead of data. Each one is fetched individually at
+      # the commit pinned in tests/linux-samples.txt.
+      - name: Fetch Linux samples
+        run: bash scripts/fetch-linux-samples.sh
 
       - name: Vet
         run: go vet ./...

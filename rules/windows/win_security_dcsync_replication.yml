@@ -1,0 +1,56 @@
+title: Directory Replication Requested By A User Account
+id: 5c0a9e74-3b81-42d6-8f27-91ae6d4c08b3
+status: experimental
+description: |
+    Detects a request for the directory replication rights that let a caller ask
+    a domain controller for the password material of any account in the domain.
+    Used this way the technique needs no code on the controller and no access to
+    its disk: it is the replication protocol working exactly as designed, called
+    by someone who should not be calling it.
+
+    There is no way to perform the operation without asking for these rights,
+    and the controller records the request before serving it. The identifiers
+    below are the rights themselves, fixed by the schema rather than chosen by
+    the caller, which is why this holds up against any tool that implements the
+    technique.
+
+    What separates the attack from ordinary domain traffic is who is asking.
+    Replication between controllers happens constantly and is performed by
+    computer accounts, so those are excluded below. The blind spot that leaves
+    is an attacker operating from a compromised computer account.
+references:
+    - https://attack.mitre.org/techniques/T1003/006/
+author: Manuel Araujo
+date: 2026-11-04
+tags:
+    - attack.credential-access
+    - attack.t1003.006
+logsource:
+    product: windows
+    service: security
+detection:
+    directory_access:
+        EventID: 4662
+        Channel: Security
+    # The first two are the rights that together allow a full replication of an
+    # account's secrets; the third covers the filtered set used by read-only
+    # controllers. Matching the property text rather than an exact value because
+    # the field carries a list, with the access mask and the object class
+    # alongside the right.
+    selection_replication_rights:
+        Properties|contains:
+            - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'
+            - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
+            - '89e95b76-444d-4c62-991a-0facbeda640c'
+    # Domain controllers replicate with each other constantly, and they do it as
+    # computer accounts, whose names end in a dollar sign. Without this the rule
+    # reports every normal replication in the domain, which is the fastest way
+    # to have it switched off.
+    filter_main_machine_accounts:
+        SubjectUserName|endswith: '$'
+    condition: directory_access and selection_replication_rights and not 1 of filter_main_*
+falsepositives:
+    - Backup, migration and directory synchronisation products that are granted
+      replication rights and run under a service user account
+level: high
+ruletype: Sigma
