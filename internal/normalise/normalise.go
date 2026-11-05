@@ -398,6 +398,24 @@ func (n *Normaliser) Declares(producer string) bool {
 	return ok
 }
 
+// Form reports how a provider is declared to write one field, or FormUnset when
+// nothing says.
+//
+// Render does not need this: it is handed the raw value and decides. A reader
+// of evidence that somebody else already rendered does need it, because there
+// the question is the other way round — the text is given and what has to be
+// checked is whether it is the text the provider would have written. Evidence
+// that has been through a log shipper arrives that way, and a shipper that
+// writes a logon id as 999 where Windows writes 0x3e7 breaks every rule that
+// mentions the field, quietly, which is the failure this package exists for.
+func (n *Normaliser) Form(producer, field string) Form {
+	t, ok := n.tables[producer]
+	if !ok {
+		return FormUnset
+	}
+	return t.Fields[field]
+}
+
 func (n *Normaliser) Gaps() []Gap {
 	n.mu.Lock()
 	defer n.mu.Unlock()

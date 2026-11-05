@@ -40,7 +40,7 @@ while read -r path; do
   if [[ "$name" == *_zeek_logs.zip ]]; then
     marker="$into/conn.log"
   else
-    marker="$into/host.json"
+    marker="$into/host.json.gz"
   fi
   if [[ -f "$marker" && "$force" != "--force" ]]; then
     continue
@@ -57,30 +57,42 @@ while read -r path; do
     exit 1
   fi
 
-  unpacked="$staging/${name%.zip}"
-  rm -rf "$unpacked"
-  unzip -q -o "$zip" -d "$unpacked"
-
   if [[ "$name" == *_zeek_logs.zip ]]; then
+    unpacked="$staging/${name%.zip}"
+    rm -rf "$unpacked"
+    unzip -q -o "$zip" -d "$unpacked"
     for log in "$unpacked"/*.log; do
       base="$(basename "$log")"
       case " $not_evidence " in *" $base "*) continue ;; esac
       cp -f "$log" "$into/$base"
     done
+    rm -rf "$unpacked"
   else
     # One JSON file per archive, named after the simulation. It is renamed,
     # because the campaign is already the directory and the tool decides what a
     # file is by its extension.
-    json="$(find "$unpacked" -maxdepth 1 -name '*.json' | head -n 1)"
-    if [[ -z "$json" ]]; then
+    #
+    # And it is recompressed rather than left as it comes out. These files are
+    # around a hundred megabytes each of which the great majority is one Sysmon
+    # event — thirty thousand ProcessAccess records in the first campaign — and
+    # seven campaigns unpacked come to 687 MB to leave lying in a working
+    # directory. Gzipped they are 25 MB, and the reader takes them either way.
+    #
+    # The entry is piped straight from the archive into gzip, so the uncompressed
+    # file never lands on disk at all.
+    if ! unzip -p "$zip" '*.json' | gzip -9 > "$into/host.json.gz"; then
       echo "no host events in $name" >&2
+      rm -f "$into/host.json.gz"
       exit 1
     fi
-    cp -f "$json" "$into/host.json"
+    if [[ ! -s "$into/host.json.gz" ]]; then
+      echo "no host events in $name" >&2
+      rm -f "$into/host.json.gz"
+      exit 1
+    fi
   fi
 
   rm -f "$zip"
-  rm -rf "$unpacked"
   fetched=$((fetched + 1))
 done < "$list"
 

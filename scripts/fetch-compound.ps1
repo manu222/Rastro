@@ -42,7 +42,7 @@ try {
 
         # What this half of the campaign produces, used to decide whether the
         # work has already been done.
-        $marker = if ($isZeek) { Join-Path $into 'conn.log' } else { Join-Path $into 'host.json' }
+        $marker = if ($isZeek) { Join-Path $into 'conn.log' } else { Join-Path $into 'host.json.gz' }
         if ((Test-Path $marker) -and -not $Force) { continue }
 
         $zip = Join-Path $staging $name
@@ -58,25 +58,47 @@ try {
             throw "what came back for $name is not an archive"
         }
 
-        $unpacked = Join-Path $staging ($name -replace '\.zip$', '')
-        Expand-Archive -Path $zip -DestinationPath $unpacked -Force
-
         if ($isZeek) {
+            $unpacked = Join-Path $staging ($name -replace '\.zip$', '')
+            Expand-Archive -Path $zip -DestinationPath $unpacked -Force
             foreach ($log in Get-ChildItem $unpacked -Filter *.log) {
                 if ($notEvidence -contains $log.Name) { continue }
                 Copy-Item $log.FullName (Join-Path $into $log.Name) -Force
             }
+            Remove-Item $unpacked -Recurse -Force
         } else {
             # One JSON file per archive, named after the simulation. It is
             # renamed, because the campaign is already the directory and the
             # tool decides what a file is by its extension.
-            $json = Get-ChildItem $unpacked -Filter *.json | Select-Object -First 1
-            if (-not $json) { throw "no host events in $name" }
-            Copy-Item $json.FullName (Join-Path $into 'host.json') -Force
+            #
+            # And it is recompressed rather than left as it comes out. These
+            # files are around a hundred megabytes each of which the great
+            # majority is one Sysmon event — thirty thousand ProcessAccess
+            # records in the first campaign — and seven campaigns unpacked come
+            # to 687 MB to leave lying in a working directory. Gzipped they are
+            # 25 MB, and the reader takes them either way.
+            #
+            # The entry is read straight out of the archive into gzip, so the
+            # uncompressed file never lands on disk at all.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+            try {
+                $entry = $archive.Entries | Where-Object { $_.Name -like '*.json' } | Select-Object -First 1
+                if (-not $entry) { throw "no host events in $name" }
+
+                $out  = Join-Path $into 'host.json.gz'
+                $src  = $entry.Open()
+                $dst  = [System.IO.File]::Create($out)
+                $gzip = New-Object System.IO.Compression.GZipStream($dst, [System.IO.Compression.CompressionLevel]::Optimal)
+                try { $src.CopyTo($gzip) } finally {
+                    $gzip.Dispose(); $dst.Dispose(); $src.Dispose()
+                }
+            } finally {
+                $archive.Dispose()
+            }
         }
 
         Remove-Item $zip -Force
-        Remove-Item $unpacked -Recurse -Force
         $fetched++
     }
 } finally {

@@ -13,6 +13,7 @@ import (
 	"github.com/manu222/rastro/internal/sigma"
 	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
+	"github.com/manu222/rastro/internal/source/winjson"
 	"github.com/manu222/rastro/internal/source/zeek"
 )
 
@@ -198,7 +199,7 @@ func truncate(s string, n int) string {
 // walkEvidence reads every event log under root and hands each record to visit.
 // Used for the pass that builds the ancestry index, where nothing is evaluated
 // and nothing is counted.
-func walkEvidence(root string, windows *evtx.Reader, linux *auditd.Reader, network *zeek.Reader, visit func(*event.Event)) error {
+func walkEvidence(root string, windows *evtx.Reader, shipped *winjson.Reader, linux *auditd.Reader, network *zeek.Reader, visit func(*event.Event)) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -219,6 +220,8 @@ func walkEvidence(root string, windows *evtx.Reader, linux *auditd.Reader, netwo
 			_, rerr = linux.ReadFile(path, emit)
 		case sourceZeek:
 			_, rerr = network.ReadFile(path, emit)
+		case sourceWinJSON:
+			_, rerr = shipped.ReadFile(path, emit)
 		}
 		if rerr != nil {
 			// A file that cannot be read is reported by the pass that counts;

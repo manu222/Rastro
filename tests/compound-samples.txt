@@ -29,7 +29,13 @@
 #
 # Format: one repository path per line. Blank lines and # are ignored. The
 # archives are unpacked into datasets-compound/<campaign>/, the host half as
-# host.json and the Zeek logs under their own names.
+# host.json.gz and the Zeek logs under their own names.
+#
+# The host half stays compressed. Each one is about a hundred megabytes of which
+# the great majority is a single Sysmon event — thirty thousand ProcessAccess
+# records in the first campaign — and the seven of them unpacked come to 687 MB.
+# Gzipped they are 25 MB and the reader takes them either way, which is also
+# true of the evidence this format arrives in outside a laboratory.
 
 commit d9d40ef123d2c87d5d3df28c96bcab4f0faccc87
 

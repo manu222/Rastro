@@ -14,6 +14,7 @@ import (
 	"github.com/manu222/rastro/internal/sigma"
 	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
+	"github.com/manu222/rastro/internal/source/winjson"
 	"github.com/manu222/rastro/internal/source/zeek"
 )
 
@@ -60,10 +61,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	// "who was behind this" differently depending on the order of a directory
 	// listing.
 	windows := evtx.New(root)
+	shipped := winjson.New(root)
 	linux := auditd.New(root)
 	network := zeek.New(root)
 	lineage := correlate.New()
-	if err := walkEvidence(root, windows, linux, network, lineage.Observe); err != nil {
+	if err := walkEvidence(root, windows, shipped, linux, network, lineage.Observe); err != nil {
 		return in, nil, diag, err
 	}
 	diag.Processes, diag.Logons = lineage.Size()
@@ -142,6 +144,14 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			rerr = err
 			in.UnreadableRecords += stats.Unparsed + stats.Malformed
 			failure = stats.FirstFailure
+		case sourceWinJSON:
+			stats, err := shipped.ReadFile(path, visit)
+			rerr = err
+			// A line that is not a record, and an object that cannot be turned
+			// into an event, are both evidence that was not read, which is the
+			// same thing the other three readers count under their own names.
+			in.UnreadableRecords += stats.Unparsed + stats.Unreadable
+			failure = stats.FirstFailure
 		}
 		if rerr != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
@@ -200,13 +210,25 @@ const (
 	sourceEVTX
 	sourceAuditd
 	sourceZeek
+	sourceWinJSON
 )
 
 func sourceOf(path string) sourceKind {
 	base := strings.ToLower(filepath.Base(path))
-	switch strings.ToLower(filepath.Ext(path)) {
+	// Compression is not a format. A name is stripped of it before anything
+	// else looks at the name, because evidence that has been through a shipper
+	// usually arrives compressed and a file called host.json.gz is a host.json.
+	if stripped, ok := strings.CutSuffix(base, ".gz"); ok {
+		base = stripped
+	}
+	switch filepath.Ext(base) {
 	case ".evtx":
 		return sourceEVTX
+	case ".json":
+		// Windows events as a log shipper writes them. The extension is all
+		// there is to go on, and a .json that turns out to be something else
+		// counts every line as unread rather than quietly producing nothing.
+		return sourceWinJSON
 	case ".log":
 		// Two text formats share the extension, and which one a file is gets
 		// decided by its name rather than by opening it. Zeek names its logs
@@ -215,7 +237,17 @@ func sourceOf(path string) sourceKind {
 		// bearing either way. Anything else called .log is read as an audit
 		// log, and a file that turns out to be neither is counted as unread
 		// lines rather than silently producing nothing.
-		if zeekLogs[strings.TrimSuffix(base, ".log")] {
+		name := strings.TrimSuffix(base, ".log")
+		if zeekDiagnostics[name] {
+			// Zeek's own operational logs. They say what the sensor was doing
+			// rather than what happened on the wire, so they are evidence of
+			// nothing — and read as an audit log, which is what happened before
+			// this, every line of them is counted as evidence that could not be
+			// read. A number that says ten records were missed when nothing was
+			// missed is worse than no number at all.
+			return sourceNone
+		}
+		if zeekLogs[name] {
 			return sourceZeek
 		}
 		return sourceAuditd
@@ -233,4 +265,19 @@ var zeekLogs = map[string]bool{
 	"ntlm": true, "notice": true, "weird": true, "x509": true, "rdp": true,
 	"ssh": true, "smtp": true, "ftp": true, "dhcp": true, "sip": true,
 	"snmp": true, "software": true, "tunnel": true, "traceroute": true,
+	// What Zeek's PE analyser says about an executable it saw cross the wire:
+	// its architecture, its subsystem, its sections. On the compound corpus
+	// that is how the network half knows a 7 KB download was a 64-bit Windows
+	// binary, which is half of the only question worth asking about it.
+	"pe": true,
+}
+
+// Zeek's own operational logs, which are about the sensor rather than about the
+// traffic. They are skipped rather than read, because the alternative is that
+// an evidence directory copied straight out of a Zeek deployment reports lines
+// that could not be read when there was nothing in them to read.
+var zeekDiagnostics = map[string]bool{
+	"analyzer": true, "packet_filter": true, "loaded_scripts": true,
+	"reporter": true, "stats": true, "capture_loss": true, "cluster": true,
+	"broker": true, "telemetry": true, "known_services": true,
 }
