@@ -12,6 +12,7 @@ import (
 	"github.com/manu222/rastro/internal/event"
 	"github.com/manu222/rastro/internal/report"
 	"github.com/manu222/rastro/internal/sigma"
+	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
 )
 
@@ -57,9 +58,10 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	// explains an event can be in a later file, so a single pass would answer
 	// "who was behind this" differently depending on the order of a directory
 	// listing.
-	reader := evtx.New(root)
+	windows := evtx.New(root)
+	linux := auditd.New(root)
 	lineage := correlate.New()
-	if err := walkEvidence(root, reader, lineage.Observe); err != nil {
+	if err := walkEvidence(root, windows, linux, lineage.Observe); err != nil {
 		return in, nil, diag, err
 	}
 	diag.Processes, diag.Logons = lineage.Size()
@@ -74,12 +76,13 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
+		kind := sourceOf(path)
+		if d.IsDir() || kind == sourceNone {
 			return nil
 		}
 		in.Files++
 
-		stats, rerr := reader.ReadFile(path, func(e *event.Event) error {
+		visit := func(e *event.Event) error {
 			in.Records++
 			if e.Host.Known() {
 				hosts[e.Host.Value] = true
@@ -112,15 +115,32 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 				matches = append(matches, m)
 			}
 			return nil
-		})
+		}
+
+		var rerr error
+		var failure error
+		switch kind {
+		case sourceEVTX:
+			stats, err := windows.ReadFile(path, visit)
+			rerr = err
+			in.UnreadableRecords += stats.Unreadable
+			in.DamagedChunks += stats.DamagedChunks
+			in.SkippedFields += stats.SkippedFields
+			failure = stats.FirstFailure
+		case sourceAuditd:
+			stats, err := linux.ReadFile(path, visit)
+			rerr = err
+			// A line that is not an audit record is evidence that was not
+			// read, which is the same thing a record that would not parse is
+			// on the Windows side, so it is counted the same way.
+			in.UnreadableRecords += stats.Unparsed
+			failure = stats.FirstFailure
+		}
 		if rerr != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
 		}
-		in.UnreadableRecords += stats.Unreadable
-		in.DamagedChunks += stats.DamagedChunks
-		in.SkippedFields += stats.SkippedFields
-		if stats.FirstFailure != nil && in.FirstFailure == "" {
-			in.FirstFailure = fmt.Sprintf("%s: %v", filepath.Base(path), stats.FirstFailure)
+		if failure != nil && in.FirstFailure == "" {
+			in.FirstFailure = fmt.Sprintf("%s: %v", filepath.Base(path), failure)
 		}
 		return nil
 	})
@@ -128,7 +148,7 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		return in, nil, diag, err
 	}
 	in.Elapsed = time.Since(start)
-	in.UndeclaredShapes = len(reader.Gaps())
+	in.UndeclaredShapes = len(windows.Gaps())
 
 	for host := range hosts {
 		in.Hosts = append(in.Hosts, host)
@@ -149,6 +169,9 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	// run. They belong in every report, because a reader cannot be expected to
 	// have read the repository.
 	in.Notes = []string{
+		"An audit record written as `unit= auditd`, with a space after the equals sign, " +
+			"carries no unit field at all, so a rule looking for a stopped service cannot " +
+			"see it. Three records of this corpus are written that way.",
 		"Sysmon writes its WMI events with the values quoted and the backslashes doubled, " +
 			"so a rule matching a plain path against a Sysmon 19, 20 or 21 will not fire.",
 		"Ten of Windows' message-table codes are shown as written rather than translated, " +
@@ -158,4 +181,28 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	}
 
 	return in, matches, diag, nil
+}
+
+// Which reader a file needs. Decided by extension, because the alternative is
+// opening every file in an evidence directory to find out, and an evidence
+// directory can hold a great many files that are neither.
+type sourceKind int
+
+const (
+	sourceNone sourceKind = iota
+	sourceEVTX
+	sourceAuditd
+)
+
+func sourceOf(path string) sourceKind {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".evtx":
+		return sourceEVTX
+	case ".log":
+		// An audit log by convention rather than by format. A .log that turns
+		// out to hold something else is counted as unread lines rather than
+		// silently producing nothing, which is why the reader counts them.
+		return sourceAuditd
+	}
+	return sourceNone
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/manu222/rastro/internal/event"
 	"github.com/manu222/rastro/internal/sigma"
+	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
 )
 
@@ -32,14 +33,64 @@ import (
 // expectations honest; this test reads what that one proved.
 
 func TestOwnEngineAgreesWithTheReferenceEngine(t *testing.T) {
+	// Both halves, each against the engine its manifests came from: Hayabusa
+	// for the Windows rules and EVTX, Zircolite for the Linux rules and
+	// auditd. Two readers, two corpora, one comparison.
+	t.Run("windows", func(t *testing.T) {
+		compareAgainstManifests(t, engineHayabusa, "datasets", readEVTX)
+	})
+	t.Run("linux", func(t *testing.T) {
+		compareAgainstManifests(t, engineZircolite, "datasets-linux", readAuditd)
+	})
+}
+
+// readRecords reads one evidence file and hands every record to visit.
+type readRecords func(t *testing.T, path string, visit func(*event.Event)) error
+
+func readEVTX(t *testing.T, path string, visit func(*event.Event)) error {
+	t.Helper()
+	r := evtx.New(filepath.Dir(path))
+	_, err := r.ReadFile(path, func(e *event.Event) error {
+		visit(e)
+		return nil
+	})
+	return err
+}
+
+func readAuditd(t *testing.T, path string, visit func(*event.Event)) error {
+	t.Helper()
+	r := auditd.New(filepath.Dir(path))
+	stats, err := r.ReadFile(path, func(e *event.Event) error {
+		visit(e)
+		return nil
+	})
+	if stats.Unparsed > 0 {
+		// Not a failure in itself: an audit log can carry lines from other
+		// daemons. Reported so that a count of zero findings is never blamed
+		// on the rules when it belongs to the parser.
+		t.Logf("%s: %d line(s) were not audit records; first: %v",
+			filepath.Base(path), stats.Unparsed, stats.FirstFailure)
+	}
+	return err
+}
+
+func compareAgainstManifests(t *testing.T, engine, corpus string, read readRecords) {
 	root, err := repoRoot()
 	if err != nil {
 		t.Fatalf("cannot locate repository root: %v", err)
 	}
 
-	evidence := filepath.Join(root, "datasets")
+	evidence := filepath.Join(root, corpus)
 	if _, err := os.Stat(evidence); err != nil {
-		t.Skip("the Windows corpus is not on this machine; see tests/README.md")
+		t.Skipf("the %s corpus is not on this machine; see tests/README.md", corpus)
+	}
+	// A corpus is often a link to wherever the evidence actually lives, and
+	// filepath.WalkDir does not follow a symbolic link - not even the one it is
+	// given as its root, and it returns no error when the root is one. Without
+	// this the test walked nothing and reported that the corpus was present and
+	// empty, which is the same silent zero the reader itself guards against.
+	if resolved, err := filepath.EvalSymlinks(evidence); err == nil {
+		evidence = resolved
 	}
 
 	manifests, err := loadManifests(filepath.Join(root, "tests"))
@@ -47,16 +98,13 @@ func TestOwnEngineAgreesWithTheReferenceEngine(t *testing.T) {
 		t.Fatalf("cannot read manifests: %v", err)
 	}
 
-	// Only the manifests whose expectations came from a Windows engine. The
-	// Linux rules are auditd and there is no reader for that evidence yet, so
-	// comparing them here would be comparing against nothing.
 	type expectation struct {
 		manifest manifest
 		rule     *sigma.Compiled
 	}
 	var expectations []expectation
 	for _, m := range manifests {
-		if m.engine() != engineHayabusa {
+		if m.engine() != engine {
 			continue
 		}
 		c, err := sigma.LoadFile(filepath.Join(root, m.Rule))
@@ -67,7 +115,7 @@ func TestOwnEngineAgreesWithTheReferenceEngine(t *testing.T) {
 		expectations = append(expectations, expectation{manifest: m, rule: c})
 	}
 	if len(expectations) == 0 {
-		t.Fatal("no Windows manifests found")
+		t.Fatalf("no manifests for %s", engine)
 	}
 
 	// Count the hits of every rule in every file, with this engine.
@@ -76,13 +124,16 @@ func TestOwnEngineAgreesWithTheReferenceEngine(t *testing.T) {
 		got[e.manifest.Rule] = map[string]int{}
 	}
 
-	reader := evtx.New(evidence)
 	records := 0
 	err = filepath.WalkDir(evidence, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
+		switch {
+		case d.IsDir():
+			return nil
+		case strings.EqualFold(filepath.Ext(path), ".evtx"), strings.EqualFold(filepath.Ext(path), ".log"):
+		default:
 			return nil
 		}
 		rel, err := filepath.Rel(evidence, path)
@@ -91,16 +142,14 @@ func TestOwnEngineAgreesWithTheReferenceEngine(t *testing.T) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		_, rerr := reader.ReadFile(path, func(ev *event.Event) error {
+		if rerr := read(t, path, func(ev *event.Event) {
 			records++
 			for _, e := range expectations {
 				if e.rule.Matches(ev.Raw) {
 					got[e.manifest.Rule][rel]++
 				}
 			}
-			return nil
-		})
-		if rerr != nil {
+		}); rerr != nil {
 			t.Errorf("%s: %v", rel, rerr)
 		}
 		return nil

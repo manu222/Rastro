@@ -11,6 +11,7 @@ import (
 	"github.com/manu222/rastro/internal/event"
 	"github.com/manu222/rastro/internal/report"
 	"github.com/manu222/rastro/internal/sigma"
+	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
 )
 
@@ -123,8 +124,16 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 // what it should.
 func printFinding(f report.Finding) {
 	fmt.Printf("\n  [%s] %s\n", strings.ToUpper(f.Level), f.Rule)
-	fmt.Printf("    %s  %s  record %d of %s\n",
-		f.Time.Format("2006-01-02 15:04:05"), f.Host, f.Origin.Number, f.Origin.File)
+	// The host is left out rather than printed as a gap when the evidence does
+	// not name one. An audit log carries no node name unless it was configured
+	// to, and two spaces where a machine should be reads like a bug.
+	if f.Host != "" {
+		fmt.Printf("    %s  %s  record %d of %s\n",
+			f.Time.Format("2006-01-02 15:04:05"), f.Host, f.Origin.Number, f.Origin.File)
+	} else {
+		fmt.Printf("    %s  record %d of %s  (the evidence names no machine)\n",
+			f.Time.Format("2006-01-02 15:04:05"), f.Origin.Number, f.Origin.File)
+	}
 	if f.Action != "" {
 		fmt.Printf("    %s", f.Action)
 		switch {
@@ -188,18 +197,26 @@ func truncate(s string, n int) string {
 // walkEvidence reads every event log under root and hands each record to visit.
 // Used for the pass that builds the ancestry index, where nothing is evaluated
 // and nothing is counted.
-func walkEvidence(root string, reader *evtx.Reader, visit func(*event.Event)) error {
+func walkEvidence(root string, windows *evtx.Reader, linux *auditd.Reader, visit func(*event.Event)) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
+		kind := sourceOf(path)
+		if d.IsDir() || kind == sourceNone {
 			return nil
 		}
-		_, rerr := reader.ReadFile(path, func(e *event.Event) error {
+		emit := func(e *event.Event) error {
 			visit(e)
 			return nil
-		})
+		}
+		var rerr error
+		switch kind {
+		case sourceEVTX:
+			_, rerr = windows.ReadFile(path, emit)
+		case sourceAuditd:
+			_, rerr = linux.ReadFile(path, emit)
+		}
 		if rerr != nil {
 			// A file that cannot be read is reported by the pass that counts;
 			// here it only means fewer ancestors, and the lineages that depend
