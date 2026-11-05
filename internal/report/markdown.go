@@ -272,9 +272,7 @@ func writeFindingMarkdown(out *writer, n int, f Finding) {
 			if o.Service != "" {
 				line += ", which the network read as " + o.Service
 			}
-			if o.Sent != "" || o.Received != "" {
-				line += fmt.Sprintf(", %s bytes out and %s back", orDash(o.Sent), orDash(o.Received))
-			}
+			line += ", " + crossed(o.OutboundSeen, o.Sent, o.Received)
 			if o.State != "" {
 				line += ", state " + o.State
 			}
@@ -287,6 +285,34 @@ func writeFindingMarkdown(out *writer, n int, f Finding) {
 			out.line("%s. %s.", line, o.Why)
 		case o.Unresolved != "":
 			out.line("The other source has nothing to add: %s.", o.Unresolved)
+		}
+		out.blank()
+	}
+
+	// Where the process went. This is the question a finding about a program
+	// leaves open, and the answer is in records the finding itself never
+	// touches.
+	if n := f.Network; n != nil && n.Opened > 0 {
+		out.line("%s", n.Summary())
+		out.blank()
+		for _, c := range n.Connections {
+			line := "- " + c.Remote
+			if c.Protocol != "" {
+				line += " over " + c.Protocol
+			}
+			if c.FlowID != "" {
+				line += fmt.Sprintf(", flow `%s`", c.FlowID)
+				if c.Service != "" {
+					line += " read as " + c.Service
+				}
+				line += ", " + crossed(c.OutboundSeen, c.Sent, c.Received)
+			} else {
+				line += ", which the network evidence does not hold"
+			}
+			out.line("%s", line)
+		}
+		if rest := n.Opened - len(n.Connections); rest > 0 {
+			out.line("- and %d more", rest)
 		}
 		out.blank()
 	}

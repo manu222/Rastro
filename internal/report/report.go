@@ -23,6 +23,7 @@
 package report
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -183,6 +184,8 @@ type Finding struct {
 	// Other is the same connection as the other source saw it, on a finding
 	// about a connection.
 	Other *OtherSource `json:"other_source,omitempty"`
+	// Network is where the acting process went, on a finding about a process.
+	Network *Network `json:"network,omitempty"`
 
 	// Involved are the entities this finding touches, which is how the report
 	// is grouped.
@@ -247,17 +250,100 @@ type OtherSource struct {
 	CommandLine string `json:"command_line,omitempty"`
 	Account     string `json:"account,omitempty"`
 
-	FlowID   string `json:"flow_id,omitempty"`
-	Service  string `json:"service,omitempty"`
-	State    string `json:"state,omitempty"`
-	Sent     string `json:"bytes_sent,omitempty"`
-	Received string `json:"bytes_received,omitempty"`
-	Duration string `json:"duration,omitempty"`
+	FlowID  string `json:"flow_id,omitempty"`
+	Service string `json:"service,omitempty"`
+	State   string `json:"state,omitempty"`
+	// OutboundSeen reports whether the capture observed the side that opened
+	// the connection; see originatorSeen. Sent is left empty when it did not,
+	// because Zeek's zero there is an absence of observation.
+	OutboundSeen bool   `json:"outbound_observed"`
+	Sent         string `json:"bytes_sent,omitempty"`
+	Received     string `json:"bytes_received,omitempty"`
+	Duration     string `json:"duration,omitempty"`
 
 	Why        string  `json:"why,omitempty"`
 	Unresolved string  `json:"unresolved,omitempty"`
 	Origin     *Record `json:"origin,omitempty"`
 }
+
+// Network is where the finding's process went, for a finding that is about the
+// process rather than about one of its connections.
+//
+// Opened is the whole count and Connections is the part of it this report
+// shows, because a service process opens hundreds and a report that lists them
+// all is one nobody reads. Which ones are shown is simply the order they appear
+// in the evidence: any other order would be this tool deciding which
+// connections matter, and it has no basis for that.
+type Network struct {
+	Opened      int       `json:"connections_opened"`
+	SeenOnWire  int       `json:"seen_on_the_wire"`
+	Connections []Reached `json:"connections,omitempty"`
+	Unresolved  string    `json:"unresolved,omitempty"`
+}
+
+// Summary is the sentence that introduces where a process went.
+//
+// It is here and not in each renderer because there are three of them and the
+// sentence has a singular, and "1 connection, 1 of which" in a document
+// somebody hands to a client makes the rest of it look unchecked.
+func (n *Network) Summary() string {
+	switch {
+	case n.Opened == 1 && n.SeenOnWire == 1:
+		return "This process opened 1 connection in the evidence, which the network recorded as well:"
+	case n.Opened == 1:
+		return "This process opened 1 connection in the evidence, which the network evidence does not hold:"
+	default:
+		return fmt.Sprintf("This process opened %d connections in the evidence, %d of which the network recorded as well:",
+			n.Opened, n.SeenOnWire)
+	}
+}
+
+// Reached is one connection the process opened.
+type Reached struct {
+	Remote   string `json:"remote"`
+	Protocol string `json:"protocol,omitempty"`
+	// The rest is filled only when the network recorded this connection too.
+	FlowID  string `json:"flow_id,omitempty"`
+	Service string `json:"service,omitempty"`
+	State   string `json:"state,omitempty"`
+	// OutboundSeen reports whether the capture observed the side that opened
+	// the connection. When it did not, Sent is not a measurement.
+	OutboundSeen bool    `json:"outbound_observed"`
+	Sent         string  `json:"bytes_sent,omitempty"`
+	Received     string  `json:"bytes_received,omitempty"`
+	Origin       Record  `json:"origin"`
+	Flow         *Record `json:"flow_origin,omitempty"`
+}
+
+// originatorSeen reports whether Zeek observed the side that opened the
+// connection.
+//
+// This matters because orig_bytes is documented as "the number of payload
+// bytes the originator sent", and in three of Zeek's connection states it also
+// says it never saw that side — SHR, "responder sent a SYN ACK followed by a
+// FIN, we never saw a SYN from the originator"; RSTRH, the same with a RST;
+// and OTH, "no SYN seen, just midstream traffic". In those three a count of
+// zero is an absence of observation and not a measurement of zero, and a
+// report that prints "0 bytes out" is making a claim the evidence does not.
+//
+// It is not a hypothetical: 2,660 of the 2,711 flows in the compound corpus
+// are in one of those three states, so this is the normal case for a capture
+// taken at a point that sees one direction.
+//
+// The states are quoted from Zeek's own script reference rather than
+// remembered, which is the only way a table like this is worth anything.
+func originatorSeen(state string) bool {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "SHR", "RSTRH", "OTH":
+		return false
+	}
+	return true
+}
+
+// shownConnections caps what a finding lists. Five is enough to recognise a
+// pattern and short enough to read; the count above it is what says how much
+// was left out.
+const shownConnections = 5
 
 // Involvement is an entity and what it was to a finding.
 type Involvement struct {
@@ -351,6 +437,9 @@ type Match struct {
 	// a finding on a host record, and the process, for one on a network
 	// record. Empty on every finding that is not about a connection.
 	Peer correlate.Connection
+	// Reach is where the acting process went on the network, which is the
+	// question a finding about a process leaves open.
+	Reach correlate.Reach
 }
 
 // Build turns an analysis into a report.
@@ -467,8 +556,45 @@ func buildFinding(m Match) Finding {
 	}
 
 	f.Other = otherSource(m.Peer)
+	f.Network = reached(m.Reach)
 	f.Involved = involvement(e, m.Account)
 	return f
+}
+
+// reached flattens where a process went. A process that opened nothing gets
+// nothing: most findings are not about a program that touched the network, and
+// a line saying so on every one of them would be noise.
+func reached(r correlate.Reach) *Network {
+	if r.Total == 0 {
+		if r.Unresolved != "" {
+			return &Network{Unresolved: r.Unresolved}
+		}
+		return nil
+	}
+	n := &Network{Opened: r.Total, SeenOnWire: r.OnWire}
+	for i, s := range r.Sightings {
+		if i >= shownConnections {
+			break
+		}
+		c := Reached{
+			Remote:   s.Remote,
+			Protocol: s.Protocol,
+			Origin:   Record{File: s.Origin.Path, Number: s.Origin.Record},
+		}
+		if s.Flow != nil {
+			c.FlowID = clean(s.Flow.UID)
+			c.Service = clean(s.Flow.Service)
+			c.State = clean(s.Flow.State)
+			c.Received = clean(s.Flow.Received)
+			c.OutboundSeen = originatorSeen(s.Flow.State)
+			if c.OutboundSeen {
+				c.Sent = clean(s.Flow.Sent)
+			}
+			c.Flow = &Record{File: s.Flow.Origin.Path, Number: s.Flow.Origin.Record}
+		}
+		n.Connections = append(n.Connections, c)
+	}
+	return n
 }
 
 // otherSource flattens the join, and keeps an unresolved one rather than
@@ -479,14 +605,17 @@ func otherSource(c correlate.Connection) *OtherSource {
 	switch {
 	case c.Flow != nil:
 		o := &OtherSource{
-			FlowID:   clean(c.Flow.UID),
-			Service:  clean(c.Flow.Service),
-			State:    clean(c.Flow.State),
-			Sent:     clean(c.Flow.Sent),
-			Received: clean(c.Flow.Received),
-			Duration: clean(c.Flow.Duration),
-			Why:      c.Why,
-			Origin:   &Record{File: c.Flow.Origin.Path, Number: c.Flow.Origin.Record},
+			FlowID:       clean(c.Flow.UID),
+			Service:      clean(c.Flow.Service),
+			State:        clean(c.Flow.State),
+			Received:     clean(c.Flow.Received),
+			Duration:     clean(c.Flow.Duration),
+			OutboundSeen: originatorSeen(c.Flow.State),
+			Why:          c.Why,
+			Origin:       &Record{File: c.Flow.Origin.Path, Number: c.Flow.Origin.Record},
+		}
+		if o.OutboundSeen {
+			o.Sent = clean(c.Flow.Sent)
 		}
 		return o
 	case !c.Process.Empty():
@@ -788,6 +917,17 @@ func sortedKeys(m map[string]bool) []string {
 // break the line they are supposed to explain. The whitespace is collapsed
 // rather than stripped, so what is shown is still the value.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// crossed writes what the capture recorded crossing a connection, and declines
+// to write what it did not. See originatorSeen: in the three states where Zeek
+// says it never saw the side that opened the connection, there is no number for
+// that direction, and writing "0 bytes out" would invent one.
+func crossed(outboundSeen bool, sent, received string) string {
+	if !outboundSeen {
+		return orDash(received) + " bytes back, and the capture did not see the side that opened it"
+	}
+	return orDash(sent) + " bytes out and " + orDash(received) + " back"
+}
 
 // orDash is for a count the evidence did not record. Zeek leaves orig_bytes
 // unset on a flow it only saw one direction of, and "0 bytes out" would be a

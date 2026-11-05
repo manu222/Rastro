@@ -64,6 +64,16 @@ type Host struct {
 	GUID        string
 	User        string
 
+	// Remote is the far end, the way an analyst says it: 10.0.5.13:8080.
+	// Which end that is comes out of the record rather than out of a guess —
+	// Sysmon writes whether the connection was initiated here, and on an
+	// inbound one the far end is the source.
+	Remote   string
+	Protocol string
+	// Key is the five-tuple this record was filed under, so that the flow can
+	// be looked up again without rebuilding it.
+	Key string
+
 	Origin event.Origin
 }
 
@@ -118,6 +128,9 @@ func (ix *Index) observeHostConn(e *event.Event, key string) {
 		PID:         e.Process.PID.Value,
 		GUID:        e.Process.GUID.Value,
 		User:        e.User.Value,
+		Remote:      remoteEnd(e),
+		Protocol:    e.Raw["Protocol"],
+		Key:         key,
 		Origin:      e.Origin,
 	}
 	// A record that names no program is no use as the answer to "who opened
@@ -126,6 +139,37 @@ func (ix *Index) observeHostConn(e *event.Event, key string) {
 		return
 	}
 	ix.hostConns[key] = append(ix.hostConns[key], h)
+
+	// And the same record filed under the process that opened it, which is
+	// what lets a finding about a process say what that process reached.
+	//
+	// Only by the identifier that is unique over time. A pid is reused, and
+	// attributing one process's connections to whoever held its number an hour
+	// later is the same mistake as walking a lineage by pid — which is the
+	// mistake this package was built around not making.
+	if h.GUID != "" {
+		ix.byProcess[h.GUID] = append(ix.byProcess[h.GUID], h)
+	}
+}
+
+// remoteEnd names the far end of a connection.
+//
+// Sysmon writes Initiated, which says whether this machine opened it. On an
+// outbound connection the far end is the destination and on an inbound one it
+// is the source, and reading that out of the record is not a judgement: the
+// provider wrote it down.
+func remoteEnd(e *event.Event) string {
+	ip, port := e.Raw["DestinationIp"], e.Raw["DestinationPort"]
+	if strings.EqualFold(strings.TrimSpace(e.Raw["Initiated"]), "false") {
+		ip, port = e.Raw["SourceIp"], e.Raw["SourcePort"]
+	}
+	if ip == "" {
+		return ""
+	}
+	if port == "" {
+		return ip
+	}
+	return ip + ":" + port
 }
 
 // Connection answers what the other source saw of the same connection.
@@ -219,4 +263,63 @@ func describe(key string) string {
 // Flows reports how much of each half the index holds, for the diagnostic view.
 func (ix *Index) Flows() (network, host int) {
 	return len(ix.flows), len(ix.hostConns)
+}
+
+// Sighting is one connection a process opened, with what the network made of
+// it when the network saw it too.
+type Sighting struct {
+	Remote   string
+	Protocol string
+	// Flow is nil when the network evidence holds nothing for this connection,
+	// which is a different thing from the connection not happening: the
+	// capture may simply not cover that interface or that minute.
+	Flow   *Flow
+	Origin event.Origin
+}
+
+// Reach is what a process did on the network, for a finding that is about the
+// process rather than about one of its connections.
+//
+// This is where the join earns its place. A finding says a program opened
+// lsass; what an analyst asks next is where that program came from and where it
+// went, and the second half of that question is answered by records the finding
+// never touches. Nothing here is new detection — it is the same evidence,
+// attached to the finding that makes it worth reading.
+type Reach struct {
+	// Total is how many connections this process opened in the evidence.
+	Total int
+	// OnWire is how many of those the network recorded as well.
+	OnWire    int
+	Sightings []Sighting
+	// Unresolved says why there is nothing to show, when there is nothing.
+	Unresolved string
+}
+
+// Network reports the connections the event's acting process opened.
+func (ix *Index) Network(e *event.Event) Reach {
+	guid := e.Process.GUID.Value
+	if guid == "" {
+		// Without an identifier that is unique over time there is nothing to
+		// ask with, and asking by pid would answer with another process's
+		// connections. Said rather than left blank, because a blank reads as
+		// "this process opened nothing".
+		return Reach{Unresolved: "the record names no process identifier, and a pid is reused"}
+	}
+	opened := ix.byProcess[guid]
+	if len(opened) == 0 {
+		return Reach{}
+	}
+
+	r := Reach{Total: len(opened)}
+	for _, h := range opened {
+		s := Sighting{Remote: h.Remote, Protocol: h.Protocol, Origin: h.Origin}
+		// Only an unambiguous flow is attached. Two flows sharing a tuple are
+		// two candidates, and the tiebreak would be the time.
+		if candidates := ix.flows[h.Key]; len(candidates) == 1 {
+			s.Flow = candidates[0]
+			r.OnWire++
+		}
+		r.Sightings = append(r.Sightings, s)
+	}
+	return r
 }

@@ -40,6 +40,10 @@ func HTML(w io.Writer, r *Report, sections Section) error {
 var htmlTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
 	"title": title,
 	"inc":   func(n int) int { return n + 1 },
+	"sub":   func(a, b int) int { return a - b },
+	// See crossed: the capture does not always see both directions, and the
+	// template must not turn that into a zero.
+	"crossed": crossed,
 	// repeat indents a step of a process lineage. It returns plain text that
 	// the template escapes like any other value.
 	"repeat": func(n int) string { return strings.Repeat("  ", n) },
@@ -198,8 +202,7 @@ record {{ .Origin.Number }} of <code>{{ .Origin.File }}</code>.</p>
 {{ end }}
 {{ with $f.Other }}
 {{ if .FlowID }}<p>On the wire this connection is flow <code>{{ .FlowID }}</code>{{ with .Service }}, which the
-network read as {{ . }}{{ end }}{{ if or .Sent .Received }}, {{ with .Sent }}{{ . }}{{ else }}an unrecorded number of{{ end }}
-bytes out and {{ with .Received }}{{ . }}{{ else }}an unrecorded number{{ end }} back{{ end }}{{ with .State }},
+network read as {{ . }}{{ end }}, {{ crossed .OutboundSeen .Sent .Received }}{{ with .State }},
 state {{ . }}{{ end }} &mdash; record {{ .Origin.Number }} of <code>{{ .Origin.File }}</code>.
 <span class="meta">{{ .Why }}.</span></p>
 {{ else if .Process }}<p>The host records this connection being opened by <code>{{ .Process }}</code>{{ with .Account }}
@@ -207,6 +210,17 @@ as {{ . }}{{ end }}. <span class="meta">{{ .Why }}.</span></p>
 {{ else if .Unresolved }}<p class="meta">The other source has nothing to add: {{ .Unresolved }}.</p>
 {{ end }}
 {{ end }}
+{{ with $f.Network }}{{ if .Opened }}
+<p>{{ .Summary }}</p>
+<ul>
+{{ range .Connections }}<li>{{ .Remote }}{{ with .Protocol }} over {{ . }}{{ end }}{{ if .FlowID }},
+flow <code>{{ .FlowID }}</code>{{ with .Service }} read as {{ . }}{{ end }},
+{{ crossed .OutboundSeen .Sent .Received }}{{ else }},
+which the network evidence does not hold{{ end }}</li>
+{{ end }}
+{{ if gt .Opened (len .Connections) }}<li>and {{ sub .Opened (len .Connections) }} more</li>{{ end }}
+</ul>
+{{ end }}{{ end }}
 {{ with $f.Techniques }}<p class="meta">ATT&amp;CK: {{ range $i, $t := . }}{{ if $i }}, {{ end }}{{ $t }}{{ end }}</p>{{ end }}
 <p class="meta">Record {{ $f.Origin.Number }} of <code>{{ $f.Origin.File }}</code>.</p>
 </div>

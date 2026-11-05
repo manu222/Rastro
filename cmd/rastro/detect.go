@@ -205,8 +205,11 @@ func printFinding(f report.Finding) {
 			if o.Service != "" {
 				fmt.Printf(", read as %s", o.Service)
 			}
-			if o.Sent != "" || o.Received != "" {
+			if o.OutboundSeen {
 				fmt.Printf(", %s bytes out and %s back", orUnknown(o.Sent), orUnknown(o.Received))
+			} else {
+				fmt.Printf(", %s back and the capture did not see the side that opened it",
+					orUnknown(o.Received))
 			}
 			if o.State != "" {
 				fmt.Printf(", state %s", o.State)
@@ -220,6 +223,33 @@ func printFinding(f report.Finding) {
 			fmt.Println()
 		case o.Unresolved != "":
 			fmt.Printf("    the other source has nothing to add: %s\n", o.Unresolved)
+		}
+	}
+
+	if n := f.Network; n != nil && n.Opened > 0 {
+		fmt.Printf("    %s\n", n.Summary())
+		for _, c := range n.Connections {
+			fmt.Printf("      %s", c.Remote)
+			if c.Protocol != "" {
+				fmt.Printf("/%s", c.Protocol)
+			}
+			if c.FlowID != "" {
+				fmt.Printf("   flow %s", c.FlowID)
+				if c.Service != "" {
+					fmt.Printf(" (%s)", c.Service)
+				}
+				if c.OutboundSeen {
+					fmt.Printf(", %s out / %s back", orUnknown(c.Sent), orUnknown(c.Received))
+				} else {
+					fmt.Printf(", %s back (outbound not captured)", orUnknown(c.Received))
+				}
+			} else {
+				fmt.Print("   not in the network evidence")
+			}
+			fmt.Println()
+		}
+		if rest := n.Opened - len(n.Connections); rest > 0 {
+			fmt.Printf("      and %d more\n", rest)
 		}
 	}
 }

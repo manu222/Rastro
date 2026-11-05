@@ -74,6 +74,9 @@ type Index struct {
 	// flow.go for why that is the key and the time is not.
 	flows     map[string][]*Flow
 	hostConns map[string][]*Host
+	// byProcess is the same host records filed under the process that opened
+	// them, so that a finding about a process can say what it reached.
+	byProcess map[string][]*Host
 
 	// Dropped counts what the limits refused to record, so that a lineage that
 	// breaks because of a limit can say that rather than look like missing
@@ -129,6 +132,7 @@ func New() *Index {
 		logons:    map[string]*Logon{},
 		flows:     map[string][]*Flow{},
 		hostConns: map[string][]*Host{},
+		byProcess: map[string][]*Host{},
 	}
 }
 

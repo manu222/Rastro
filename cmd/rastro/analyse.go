@@ -125,6 +125,9 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 				m.Entry, m.EntryWho = lineage.Entry(m.Lineage)
 				// The other half of the connection, when the finding is about one.
 				m.Peer = lineage.Connection(e)
+				// And where the acting process went, when the finding is about a
+				// program rather than about one of its connections.
+				m.Reach = lineage.Network(e)
 				matches = append(matches, m)
 			}
 			return nil
@@ -204,6 +207,15 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			"because they have not been resolved against a real installation yet.",
 		"There is no reader for Linux audit logs yet, so rules written against auditd " +
 			"load, run and report nothing.",
+		"Zeek counts the payload bytes each side of a connection sent, and in three of its " +
+			"connection states — SHR, RSTRH and OTH — it also records that it never saw the side " +
+			"that opened the connection. Where this report says a capture did not see the " +
+			"outbound side, that is why, and a count of zero there would have been an absence of " +
+			"observation presented as a measurement.",
+		"The host and the network are joined on the five-tuple and never on time. The two " +
+			"sources keep their own clocks, and evidence that has been through a log shipper can " +
+			"carry a time hours or days from the one the capture used, so times in this report " +
+			"order events within a source and do not date them across sources.",
 	}
 
 	return in, matches, diag, nil

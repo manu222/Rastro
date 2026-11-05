@@ -1,7 +1,9 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -417,4 +419,122 @@ func TestSessionsAreNotListedAsAffectedThings(t *testing.T) {
 	if !found {
 		t.Error("the session was dropped from the finding as well")
 	}
+}
+
+// Zeek counts the payload bytes each side sent, and in three of its connection
+// states it also records that it never saw the side that opened the
+// connection. A report that turns that into "0 bytes out" is stating a
+// measurement the evidence does not contain — and it is not an edge case:
+// 2,660 of the 2,711 flows in the compound corpus are in one of those states.
+func TestACaptureThatMissedOneDirectionDoesNotReportZeroBytes(t *testing.T) {
+	m := sampleMatch()
+	m.Peer = correlate.Connection{
+		Flow: &correlate.Flow{
+			UID: "CwSLisOv4lXMZlXd3", State: "SHR",
+			Sent: "0", Received: "7373",
+			Origin: event.Origin{Path: "conn.log", Record: 9},
+		},
+		Why: "the only flow in this evidence for 192.168.1.41:51126 to 10.0.5.13:80 over tcp",
+	}
+	r := Build(sampleInput(), []Match{m})
+
+	o := r.Findings[0].Other
+	if o == nil {
+		t.Fatal("the flow did not reach the report")
+	}
+	if o.OutboundSeen {
+		t.Error("a flow in state SHR was reported as having its outbound side observed")
+	}
+	if o.Sent != "" {
+		t.Errorf("a count of %q was kept for a direction the capture did not see", o.Sent)
+	}
+	if o.Received != "7373" {
+		t.Errorf("the direction that was seen was lost: %q", o.Received)
+	}
+
+	for _, out := range []string{render(t, Markdown, r), render(t, HTML, r)} {
+		if strings.Contains(out, "0 bytes out") {
+			t.Error("a rendering claims zero bytes out on a connection whose outbound side was never captured")
+		}
+		if !strings.Contains(out, "did not see the side that opened it") {
+			t.Error("a rendering shows the flow without saying one direction is missing")
+		}
+	}
+}
+
+// And a flow Zeek did see both ends of keeps its numbers, or the caveat above
+// would be quietly swallowing real measurements.
+func TestAFullyObservedFlowKeepsBothCounts(t *testing.T) {
+	m := sampleMatch()
+	m.Peer = correlate.Connection{
+		Flow: &correlate.Flow{
+			UID: "Cfull", State: "SF", Sent: "77", Received: "295",
+			Origin: event.Origin{Path: "conn.log", Record: 3},
+		},
+		Why: "the only flow in this evidence for it",
+	}
+	r := Build(sampleInput(), []Match{m})
+
+	o := r.Findings[0].Other
+	if !o.OutboundSeen || o.Sent != "77" || o.Received != "295" {
+		t.Errorf("a normally terminated flow lost a count: %+v", o)
+	}
+	if !strings.Contains(render(t, Markdown, r), "77 bytes out and 295 back") {
+		t.Error("the markdown rendering dropped the counts")
+	}
+}
+
+// Where a process went is shown with a cap and a total, because a service
+// process opens hundreds and a report nobody finishes reading is worse than a
+// short one. The total is what says how much was left out.
+func TestWhereAProcessWentIsCappedButTheTotalIsNot(t *testing.T) {
+	m := sampleMatch()
+	m.Reach = correlate.Reach{Total: 9, OnWire: 1}
+	for i := 0; i < 9; i++ {
+		m.Reach.Sightings = append(m.Reach.Sightings, correlate.Sighting{
+			Remote: "10.0.5.13:8080", Protocol: "tcp",
+			Origin: event.Origin{Path: "host.json.gz", Record: int64(100 + i)},
+		})
+	}
+	m.Reach.Sightings[0].Flow = &correlate.Flow{UID: "Cone", State: "SHR", Sent: "0", Received: "204532"}
+
+	r := Build(sampleInput(), []Match{m})
+	n := r.Findings[0].Network
+	if n == nil {
+		t.Fatal("the connections did not reach the report")
+	}
+	if n.Opened != 9 || n.SeenOnWire != 1 {
+		t.Errorf("totals: %+v", n)
+	}
+	if len(n.Connections) != shownConnections {
+		t.Errorf("want %d shown, got %d", shownConnections, len(n.Connections))
+	}
+	md := render(t, Markdown, r)
+	if !strings.Contains(md, "opened 9 connections") {
+		t.Error("the rendering does not say how many there were")
+	}
+	if !strings.Contains(md, "and 4 more") {
+		t.Error("the rendering does not say how many it left out")
+	}
+}
+
+// A finding about a process that touched nothing on the network gets no
+// section at all. Most findings are not about a program that opened a socket,
+// and a line saying so on every one of them is noise that trains a reader to
+// skip the part that matters.
+func TestAProcessThatOpenedNothingGetsNoNetworkSection(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+	if n := r.Findings[0].Network; n != nil {
+		t.Errorf("an empty network section was rendered: %+v", n)
+	}
+}
+
+// render runs one of the renderers and returns what it wrote.
+func render(t *testing.T, fn func(io.Writer, *Report, Section) error, r *Report) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := fn(&buf, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
 }

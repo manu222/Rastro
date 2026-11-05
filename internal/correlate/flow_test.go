@@ -301,3 +301,137 @@ func TestCaseDoesNotDecideAMatch(t *testing.T) {
 		t.Errorf("TCP and tcp were treated as different protocols: %q", c.Unresolved)
 	}
 }
+
+// Where a process went. This is the question a finding about a program leaves
+// open — it opened lsass, and then what — and the answer is in records the
+// finding itself never touches.
+func TestAProcessGainsTheConnectionsItOpened(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekFlow())
+	ix.Observe(hostConnection())
+
+	// A second connection of the same process, with no flow on the wire.
+	second := hostConnection()
+	second.Raw["SourcePort"] = "51130"
+	second.Raw["DestinationIp"], second.Raw["DestinationPort"] = "10.0.5.13", "8080"
+	second.Origin.Record = 1400
+	ix.Observe(second)
+
+	// The acting process of a finding, which is a different record entirely:
+	// a Sysmon 10 naming the same process by its identifier.
+	finding := &event.Event{
+		Class:   event.ClassProcess,
+		Action:  "process opened another process",
+		Process: event.Process{GUID: event.Seen("{81056205-5665-64dc-2704-000000000800}")},
+		Raw:     event.Fields{"EventID": "10"},
+	}
+
+	r := ix.Network(finding)
+	if r.Total != 2 {
+		t.Fatalf("want both connections, got %d: %+v", r.Total, r)
+	}
+	if r.OnWire != 1 {
+		t.Errorf("want one of them on the wire, got %d", r.OnWire)
+	}
+
+	var withFlow, without int
+	for _, s := range r.Sightings {
+		if s.Flow != nil {
+			withFlow++
+			if s.Flow.Received != "7373" {
+				t.Errorf("the flow attached to the wrong connection: %+v", s.Flow)
+			}
+			if s.Remote != "10.0.5.13:80" {
+				t.Errorf("remote end: %q", s.Remote)
+			}
+		} else {
+			without++
+			if s.Remote != "10.0.5.13:8080" {
+				t.Errorf("remote end: %q", s.Remote)
+			}
+		}
+	}
+	if withFlow != 1 || without != 1 {
+		t.Errorf("%d with a flow, %d without", withFlow, without)
+	}
+}
+
+// A pid is reused, so a process is only asked about by the identifier that is
+// unique over time. Answering by pid would hand a finding another process's
+// connections, which is the same mistake as walking a lineage by pid.
+func TestAProcessWithNoIdentifierIsNotAnswered(t *testing.T) {
+	ix := New()
+	ix.Observe(hostConnection())
+
+	byPID := &event.Event{
+		Process: event.Process{PID: event.Seen("7476")},
+		Raw:     event.Fields{"EventID": "1"},
+	}
+	r := ix.Network(byPID)
+	if r.Total != 0 {
+		t.Fatalf("connections were attributed by pid: %+v", r)
+	}
+	// And it says why, because a blank reads as "this process opened nothing".
+	if r.Unresolved == "" {
+		t.Error("nothing was attributed and nothing says why")
+	}
+}
+
+// A connection the host recorded without a process identifier is still useful
+// for the five-tuple join and cannot be filed under a process.
+func TestAConnectionWithNoProcessIdentifierIsStillJoinedByTuple(t *testing.T) {
+	ix := New()
+	noGUID := hostConnection()
+	noGUID.Process.GUID = event.Field{}
+	ix.Observe(noGUID)
+
+	if c := ix.Connection(zeekFlow()); c.Process.Image.Value == "" {
+		t.Errorf("the tuple join lost a record that has no process identifier: %q", c.Unresolved)
+	}
+}
+
+// Which end is the far end comes out of the record. Sysmon writes whether the
+// connection was initiated here, and on an inbound one the far end is the
+// source — reading that is not a judgement, the provider wrote it down.
+func TestTheFarEndOfAnInboundConnectionIsTheSource(t *testing.T) {
+	ix := New()
+	inbound := hostConnection()
+	inbound.Raw["Initiated"] = "false"
+	ix.Observe(inbound)
+
+	finding := &event.Event{
+		Process: event.Process{GUID: event.Seen("{81056205-5665-64dc-2704-000000000800}")},
+		Raw:     event.Fields{"EventID": "10"},
+	}
+	r := ix.Network(finding)
+	if len(r.Sightings) != 1 {
+		t.Fatalf("%+v", r)
+	}
+	if r.Sightings[0].Remote != "192.168.1.41:51126" {
+		t.Errorf("an inbound connection reported %q as the far end", r.Sightings[0].Remote)
+	}
+}
+
+// An ambiguous tuple attaches no flow here either. The count still says the
+// connection happened, because the host recorded it; what is missing is what
+// crossed, and inventing it from one of two candidates would be a guess.
+func TestAnAmbiguousTupleAttachesNoFlowToAProcess(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekFlow())
+	second := zeekFlow()
+	second.Raw["uid"] = "Cother"
+	second.Origin.Record = 44
+	ix.Observe(second)
+	ix.Observe(hostConnection())
+
+	r := ix.Network(&event.Event{
+		Process: event.Process{GUID: event.Seen("{81056205-5665-64dc-2704-000000000800}")},
+		Raw:     event.Fields{"EventID": "10"},
+	})
+	if r.Total != 1 {
+		t.Fatalf("%+v", r)
+	}
+	if r.OnWire != 0 || r.Sightings[0].Flow != nil {
+		t.Error("one of two flows sharing a tuple was attached anyway")
+	}
+}
