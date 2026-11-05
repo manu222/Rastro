@@ -89,6 +89,7 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 		event       *event.Event
 		hits        []sigma.Hit
 		who         event.Field
+		unresolved  string
 		steps       []correlate.Step
 		complete    bool
 		escalations []correlate.Escalation
@@ -103,6 +104,7 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 		byRule    = map[string]int{}
 		levels    = map[string]int{}
 		kept      []finding
+		exampleOf = map[string]bool{}
 	)
 
 	start := time.Now()
@@ -124,7 +126,14 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 				}
 				byRule[c.Rule.Title]++
 				levels[c.Rule.Level]++
-				if len(kept) < examples {
+				// One example per rule rather than the first few overall.
+				// The first few are whatever the directory listing happened to
+				// reach first, which here meant three findings from two rules
+				// and nothing from the seven others. A preview is supposed to
+				// show the shapes a report will have, not the order the files
+				// were in.
+				if _, shown := exampleOf[c.Rule.Title]; !shown && len(kept) < examples {
+					exampleOf[c.Rule.Title] = true
 					f := finding{
 						rule:  c.Rule.Title,
 						level: c.Rule.Level,
@@ -132,6 +141,7 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 						hits:  c.Explain(e.Raw),
 						who:   lineage.Account(e),
 					}
+					f.unresolved = lineage.Unresolved(e)
 					f.steps, f.complete = lineage.Ancestry(e)
 					f.escalations = correlate.Escalations(f.steps)
 					f.entry, f.entryWho = lineage.Entry(f.steps)
@@ -196,7 +206,7 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 	}
 
 	if len(kept) > 0 {
-		fmt.Printf("\nWhy the first %d fired:\n", len(kept))
+		fmt.Printf("\nOne example of each of %d rule(s):\n", len(kept))
 		for _, f := range kept {
 			fmt.Printf("\n  [%s] %s\n", strings.ToUpper(f.level), f.rule)
 			fmt.Printf("    %s  %s  record %d of %s\n",
@@ -204,7 +214,8 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 				f.event.Origin.Record, f.event.Origin.Path)
 			if f.event.Action != "" {
 				fmt.Printf("    %s", f.event.Action)
-				if f.who.Known() {
+				switch {
+				case f.who.Known():
 					fmt.Printf(" by %s", f.who.Value)
 					if !f.who.Trusted() {
 						// A deduced account is marked and its reasoning
@@ -213,14 +224,18 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 						// out, and that is not a forensic report.
 						fmt.Printf(" (deduced: %s)", f.who.Why)
 					}
+				case f.unresolved != "":
+					// A blank where a name should be says nothing about
+					// whether the tool failed or the evidence is short.
+					fmt.Printf(" by an account this evidence does not name (%s)", f.unresolved)
 				}
 				fmt.Println()
 			}
 			for _, h := range f.hits {
 				fmt.Printf("    because %s = %s  (rule asked for %s)\n",
-					h.Field, truncate(h.Value, 80), h.Pattern)
+					h.Field, oneLine(h.Value, 80), h.Pattern)
 			}
-			printLineage(f.steps, f.complete)
+			printLineage(f.steps, f.complete, f.event.Origin)
 			for _, esc := range f.escalations {
 				fmt.Printf("    account changed from %s to %s at %s, record %d of %s\n",
 					esc.FromUser, esc.ToUser, esc.To.Image, esc.To.Origin.Record, esc.To.Origin.Path)
@@ -291,14 +306,29 @@ func walkEvidence(root string, reader *evtx.Reader, visit func(*event.Event)) er
 
 // printLineage shows the chain of processes above an event, oldest first,
 // because that is the order the thing happened in.
-func printLineage(steps []correlate.Step, complete bool) {
-	if len(steps) == 0 {
+func printLineage(steps []correlate.Step, complete bool, self event.Origin) {
+	// On a process creation the first step of the lineage is the event itself,
+	// because the creation that explains the process is the record that fired
+	// the rule. Printing it as a step repeats a record the finding already
+	// shows two lines above.
+	shown := 0
+	for _, s := range steps {
+		if s.Process.Origin.Path != self.Path || s.Process.Origin.Record != self.Record {
+			shown++
+		}
+	}
+	if shown == 0 {
 		return
 	}
 	fmt.Println("    how it got there:")
+	depth := 0
 	for i := len(steps) - 1; i >= 0; i-- {
 		p := steps[i].Process
-		indent := strings.Repeat("  ", len(steps)-1-i)
+		if p.Origin.Path == self.Path && p.Origin.Record == self.Record {
+			continue
+		}
+		indent := strings.Repeat("  ", depth)
+		depth++
 		fmt.Printf("      %s%s", indent, p.Image)
 		if p.User != "" {
 			fmt.Printf("   %s", p.User)
@@ -315,7 +345,15 @@ func printLineage(steps []correlate.Step, complete bool) {
 	}
 }
 
-func truncate(s string, n int) string {
+// oneLine renders a field value for a report line.
+//
+// Some values are not lines at all. The Properties field of a 4662 holds an
+// access mask and a list of directory object identifiers separated by
+// newlines and tabs, and printing it as it stands breaks the line it is
+// supposed to explain. The whitespace is collapsed rather than stripped, so
+// what is shown is still the value and not a rewriting of it.
+func oneLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
 	if len(s) <= n {
 		return s
 	}

@@ -332,6 +332,48 @@ func (ix *Index) Account(e *event.Event) event.Field {
 	return event.Deduced(creator.User, "the account the acting process was created as, from "+why)
 }
 
+// Unresolved explains why no account could be worked out.
+//
+// A report with a blank where a name should be tells the reader nothing about
+// whether the tool failed, the evidence is short, or the record genuinely has
+// no owner. Those are three different situations and only one of them is worth
+// going to look at, so the reason is said rather than left out.
+func (ix *Index) Unresolved(e *event.Event) string {
+	if e.User.Known() {
+		return ""
+	}
+	if guid := e.Process.GUID.Value; guid != "" {
+		p, ok := ix.byGUID[guid]
+		switch {
+		case !ok:
+			return "the creation of this process is not in the evidence"
+		case p.User == "":
+			return "the process creation records no account either"
+		}
+		return ""
+	}
+	pid := e.Process.PID.Value
+	if pid == "" {
+		return "the record names no process to trace it through"
+	}
+	candidates := 0
+	when := e.Time.UnixNano()
+	for _, p := range ix.byPIDHost[e.Host.Value+"\x00"+pid] {
+		if p.Time <= when {
+			candidates++
+		}
+	}
+	switch candidates {
+	case 0:
+		return "no process with pid " + pid + " was recorded being created on " + e.Host.Value
+	case 1:
+		return "the process creation records no account either"
+	default:
+		return fmt.Sprintf("%d processes have held pid %s on %s, and guessing between them is how a report blames the wrong one",
+			candidates, pid, e.Host.Value)
+	}
+}
+
 // Session resolves the logon the event's process was running in.
 func (ix *Index) Session(e *event.Event) (*Logon, event.Field) {
 	id := e.Raw["LogonId"]
