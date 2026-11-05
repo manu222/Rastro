@@ -265,39 +265,69 @@ func (idx *ruleIndex) forEvent(e *event.Event) []*sigma.Compiled {
 
 // requiredEventIDs reads the identifiers a rule cannot fire without.
 //
-// It walks only the top-level conjunction of the condition: selections joined
-// by and, which every rule in this repository and most of the public corpus
-// use. A selection under an or or a not says nothing about what the rule
-// requires, so it is ignored, and the rule then ends up in the always list.
+// One required selection pinning the identifier is enough: if the rule cannot
+// match without a selection that demands EventID be 1, then it cannot match a
+// record whose EventID is 7, whatever the rest of the rule asks for. Demanding
+// that every required selection pin it — which is what this did at first — left
+// the index inert, because the selection carrying the identifier is almost
+// never the one carrying the behaviour. The "rules per record" line in the
+// output is what showed it: 12 of 13, when it should have been four.
+//
+// Only the top-level conjunction is walked. A selection under an or or a not
+// says nothing about what the rule requires, so a rule whose identifier lives
+// there keeps its place in the list that sees every record.
 func requiredEventIDs(c *sigma.Compiled) []string {
-	var ids []string
 	for _, name := range requiredSelections(c.Condition) {
-		for _, set := range c.Selections[name] {
-			// Every shape of the selection has to pin the identifier, or the
-			// rule can fire on a record with a different one.
-			found := false
-			for _, test := range set {
-				if !strings.EqualFold(test.Field, "EventID") || test.Null || test.Ref != "" {
-					continue
-				}
-				for _, m := range test.Values {
-					exact, ok := m.(sigma.Exact)
-					if !ok {
-						// Anything less definite than one value — a wildcard,
-						// a regular expression — and the rule keeps its place
-						// in the list that sees every record.
-						return nil
-					}
-					ids = append(ids, exact.Exact())
-					found = true
-				}
-			}
-			if !found {
-				return nil
-			}
+		ids, ok := pinnedEventIDs(c.Selections[name])
+		if ok {
+			return ids
 		}
 	}
-	return ids
+	return nil
+}
+
+// pinnedEventIDs reports the identifiers a selection restricts a record to, and
+// whether it restricts it at all.
+//
+// Every shape of the selection has to pin it. A selection written as a list of
+// maps means "any of these", so one shape that does not mention the identifier
+// is a shape that matches records with any identifier at all.
+func pinnedEventIDs(sel sigma.Selection) ([]string, bool) {
+	if len(sel) == 0 {
+		return nil, false
+	}
+	var ids []string
+	for _, set := range sel {
+		found := false
+		for _, test := range set {
+			if !strings.EqualFold(test.Field, "EventID") || test.Null || test.Ref != "" {
+				continue
+			}
+			if test.All && len(test.Values) > 1 {
+				// A record has one event id, so a test demanding several at
+				// once can never be satisfied. Saying so here would be a
+				// judgement about the rule; leaving it unindexed lets it be
+				// evaluated and found silent, which is the rule author's
+				// problem to see rather than this index's to hide.
+				return nil, false
+			}
+			for _, m := range test.Values {
+				exact, isExact := m.(sigma.Exact)
+				if !isExact {
+					// A wildcard or a regular expression over the identifier:
+					// less definite than a value, so the rule keeps its place
+					// in the list that sees everything.
+					return nil, false
+				}
+				ids = append(ids, exact.Exact())
+				found = true
+			}
+		}
+		if !found {
+			return nil, false
+		}
+	}
+	return ids, len(ids) > 0
 }
 
 // requiredSelections lists the selections joined by and at the top of a
