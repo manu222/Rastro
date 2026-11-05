@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manu222/rastro/internal/correlate"
 	"github.com/manu222/rastro/internal/event"
 	"github.com/manu222/rastro/internal/sigma"
 	"github.com/manu222/rastro/internal/source/evtx"
@@ -60,12 +61,39 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 	if err != nil {
 		return err
 	}
+	// Two passes over the evidence, and the reason is not laziness.
+	//
+	// The process creation that explains an event can be anywhere: a later
+	// chunk of the same file, or another file entirely, because the directory
+	// is walked in whatever order it gives and each file covers its own stretch
+	// of time. A single pass would answer "who was behind this" with "nothing
+	// yet" for any event whose creation had not been reached, which is a wrong
+	// answer that depends on the order of a directory listing.
+	//
+	// Reading twice costs a second on this corpus at the measured 30µs per
+	// record. The index built in the first pass holds only what can be an
+	// ancestor — process creations and logon sessions, five hundred of 31,243
+	// records here — so it does not grow with the size of the case.
 	reader := evtx.New(root)
+	lineage := correlate.New()
+	if err := walkEvidence(root, reader, lineage.Observe); err != nil {
+		return err
+	}
+	processes, logons := lineage.Size()
+	fmt.Printf("Ancestors known : %d process creation(s), %d logon session(s)\n",
+		processes, logons)
+
 	type finding struct {
-		rule  string
-		level string
-		event *event.Event
-		hits  []sigma.Hit
+		rule        string
+		level       string
+		event       *event.Event
+		hits        []sigma.Hit
+		who         event.Field
+		steps       []correlate.Step
+		complete    bool
+		escalations []correlate.Escalation
+		entry       *correlate.Logon
+		entryWho    event.Field
 	}
 
 	var (
@@ -97,12 +125,17 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 				byRule[c.Rule.Title]++
 				levels[c.Rule.Level]++
 				if len(kept) < examples {
-					kept = append(kept, finding{
+					f := finding{
 						rule:  c.Rule.Title,
 						level: c.Rule.Level,
 						event: e,
 						hits:  c.Explain(e.Raw),
-					})
+						who:   lineage.Account(e),
+					}
+					f.steps, f.complete = lineage.Ancestry(e)
+					f.escalations = correlate.Escalations(f.steps)
+					f.entry, f.entryWho = lineage.Entry(f.steps)
+					kept = append(kept, f)
 				}
 			}
 			return nil
@@ -171,14 +204,37 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 				f.event.Origin.Record, f.event.Origin.Path)
 			if f.event.Action != "" {
 				fmt.Printf("    %s", f.event.Action)
-				if f.event.User.Known() {
-					fmt.Printf(" by %s", f.event.User.Value)
+				if f.who.Known() {
+					fmt.Printf(" by %s", f.who.Value)
+					if !f.who.Trusted() {
+						// A deduced account is marked and its reasoning
+						// printed. The alternative is a report whose reader
+						// cannot tell what was recorded from what was worked
+						// out, and that is not a forensic report.
+						fmt.Printf(" (deduced: %s)", f.who.Why)
+					}
 				}
 				fmt.Println()
 			}
 			for _, h := range f.hits {
 				fmt.Printf("    because %s = %s  (rule asked for %s)\n",
 					h.Field, truncate(h.Value, 80), h.Pattern)
+			}
+			printLineage(f.steps, f.complete)
+			for _, esc := range f.escalations {
+				fmt.Printf("    account changed from %s to %s at %s, record %d of %s\n",
+					esc.FromUser, esc.ToUser, esc.To.Image, esc.To.Origin.Record, esc.To.Origin.Path)
+			}
+			if f.entry != nil {
+				fmt.Printf("    came in through logon type %s", f.entry.Type)
+				if f.entry.Address != "" && f.entry.Address != "-" {
+					fmt.Printf(" from %s", f.entry.Address)
+				}
+				if f.entry.Workstation != "" && f.entry.Workstation != "-" {
+					fmt.Printf(" (%s)", f.entry.Workstation)
+				}
+				fmt.Printf(" as %s, record %d of %s\n",
+					f.entryWho.Value, f.entry.Origin.Record, f.entry.Origin.Path)
 			}
 		}
 	}
@@ -206,6 +262,57 @@ func evidenceRoot(dir string) (string, error) {
 		return "", fmt.Errorf("%s is not a directory", dir)
 	}
 	return resolved, nil
+}
+
+// walkEvidence reads every event log under root and hands each record to visit.
+// Used for the pass that builds the ancestry index, where nothing is evaluated
+// and nothing is counted.
+func walkEvidence(root string, reader *evtx.Reader, visit func(*event.Event)) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
+			return nil
+		}
+		_, rerr := reader.ReadFile(path, func(e *event.Event) error {
+			visit(e)
+			return nil
+		})
+		if rerr != nil {
+			// A file that cannot be read is reported by the pass that counts;
+			// here it only means fewer ancestors, and the lineages that depend
+			// on it will say they are incomplete.
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
+		}
+		return nil
+	})
+}
+
+// printLineage shows the chain of processes above an event, oldest first,
+// because that is the order the thing happened in.
+func printLineage(steps []correlate.Step, complete bool) {
+	if len(steps) == 0 {
+		return
+	}
+	fmt.Println("    how it got there:")
+	for i := len(steps) - 1; i >= 0; i-- {
+		p := steps[i].Process
+		indent := strings.Repeat("  ", len(steps)-1-i)
+		fmt.Printf("      %s%s", indent, p.Image)
+		if p.User != "" {
+			fmt.Printf("   %s", p.User)
+		}
+		if p.Integrity != "" {
+			fmt.Printf("   %s", p.Integrity)
+		}
+		fmt.Printf("   record %d of %s\n", p.Origin.Record, p.Origin.Path)
+	}
+	if !complete {
+		// Said out loud, because a chain that stops because the evidence stops
+		// is not a chain that reached the beginning.
+		fmt.Println("      (the chain stops here: the parent's creation is not in this evidence)")
+	}
 }
 
 func truncate(s string, n int) string {
