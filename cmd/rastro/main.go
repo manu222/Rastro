@@ -23,9 +23,24 @@ import (
 	"github.com/manu222/rastro/internal/winevent"
 )
 
+const usage = `usage:
+  rastro read   [-sample] [-codes] <evidence directory>
+  rastro detect [-rules <directory>] [-examples <n>] <evidence directory>`
+
 func main() {
-	if len(os.Args) < 3 || os.Args[1] != "read" {
-		fmt.Fprintln(os.Stderr, "usage: rastro read [-sample] [-codes] <directory>")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if os.Args[1] == "detect" {
+		if err := runDetect(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if os.Args[1] != "read" {
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 	args := os.Args[2:]
@@ -42,7 +57,7 @@ func main() {
 		args = args[1:]
 	}
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rastro read [-sample] [-codes] <directory>")
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 	if err := run(args[0]); err != nil {
@@ -170,7 +185,11 @@ func printSamples() {
 	}
 }
 
-func run(root string) error {
+func run(dir string) error {
+	root, err := evidenceRoot(dir)
+	if err != nil {
+		return err
+	}
 	reader := evtx.New(root)
 
 	var (
@@ -191,7 +210,7 @@ func run(root string) error {
 	)
 
 	start := time.Now()
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

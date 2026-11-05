@@ -195,7 +195,7 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 	}
 
 	e := &event.Event{
-		Time:     flat.Time,
+		Time: flat.Time,
 		// The source's own word for what happened, when the mapping finds one.
 		// Until then the event id is the only word the record gives.
 		Activity: flat.Fields["EventID"],
