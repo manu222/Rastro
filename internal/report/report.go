@@ -180,6 +180,9 @@ type Finding struct {
 	AccountChanges []AccountChange `json:"account_changes,omitempty"`
 	// Entry is the oldest logon session in the lineage: where it came from.
 	Entry *EntryPoint `json:"entry,omitempty"`
+	// Other is the same connection as the other source saw it, on a finding
+	// about a connection.
+	Other *OtherSource `json:"other_source,omitempty"`
 
 	// Involved are the entities this finding touches, which is how the report
 	// is grouped.
@@ -225,6 +228,35 @@ type EntryPoint struct {
 	Address     string `json:"address,omitempty"`
 	Workstation string `json:"workstation,omitempty"`
 	Origin      Record `json:"origin"`
+}
+
+// OtherSource is what the source that did not produce this record saw of the
+// same connection.
+//
+// A finding on a host record gains the flow: how much crossed, how long it
+// lasted, what the network's analysers made of it, and Zeek's own identifier
+// for the flow, which is what an analyst follows to find the request, the file
+// and the certificate in the rest of the network evidence. A finding on a
+// network record gains the program and the account.
+//
+// Every field here was joined by this tool rather than recorded by anything, so
+// Why carries the sentence that justifies it, and an unresolved join says why
+// instead of leaving a blank that could be read as "nothing happened".
+type OtherSource struct {
+	Process     string `json:"process,omitempty"`
+	CommandLine string `json:"command_line,omitempty"`
+	Account     string `json:"account,omitempty"`
+
+	FlowID   string `json:"flow_id,omitempty"`
+	Service  string `json:"service,omitempty"`
+	State    string `json:"state,omitempty"`
+	Sent     string `json:"bytes_sent,omitempty"`
+	Received string `json:"bytes_received,omitempty"`
+	Duration string `json:"duration,omitempty"`
+
+	Why        string  `json:"why,omitempty"`
+	Unresolved string  `json:"unresolved,omitempty"`
+	Origin     *Record `json:"origin,omitempty"`
 }
 
 // Involvement is an entity and what it was to a finding.
@@ -315,6 +347,10 @@ type Match struct {
 	Changes  []correlate.Escalation
 	Entry    *correlate.Logon
 	EntryWho event.Field
+	// Peer is what the other source saw of the same connection: the flow, for
+	// a finding on a host record, and the process, for one on a network
+	// record. Empty on every finding that is not about a connection.
+	Peer correlate.Connection
 }
 
 // Build turns an analysis into a report.
@@ -430,8 +466,40 @@ func buildFinding(m Match) Finding {
 		}
 	}
 
+	f.Other = otherSource(m.Peer)
 	f.Involved = involvement(e, m.Account)
 	return f
+}
+
+// otherSource flattens the join, and keeps an unresolved one rather than
+// dropping it: "the network evidence holds no flow for this" is something the
+// reader needs, and a blank where a flow should be says nothing about whether
+// the tool looked.
+func otherSource(c correlate.Connection) *OtherSource {
+	switch {
+	case c.Flow != nil:
+		o := &OtherSource{
+			FlowID:   clean(c.Flow.UID),
+			Service:  clean(c.Flow.Service),
+			State:    clean(c.Flow.State),
+			Sent:     clean(c.Flow.Sent),
+			Received: clean(c.Flow.Received),
+			Duration: clean(c.Flow.Duration),
+			Why:      c.Why,
+			Origin:   &Record{File: c.Flow.Origin.Path, Number: c.Flow.Origin.Record},
+		}
+		return o
+	case !c.Process.Empty():
+		return &OtherSource{
+			Process:     c.Process.Image.Value,
+			CommandLine: oneLine(c.Process.CommandLine.Value),
+			Account:     c.User.Value,
+			Why:         c.Why,
+		}
+	case c.Unresolved != "":
+		return &OtherSource{Unresolved: c.Unresolved}
+	}
+	return nil
 }
 
 // involvement collects the entities a finding touches. The host and the account
@@ -720,6 +788,16 @@ func sortedKeys(m map[string]bool) []string {
 // break the line they are supposed to explain. The whitespace is collapsed
 // rather than stripped, so what is shown is still the value.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// orDash is for a count the evidence did not record. Zeek leaves orig_bytes
+// unset on a flow it only saw one direction of, and "0 bytes out" would be a
+// claim the evidence does not make.
+func orDash(s string) string {
+	if s == "" {
+		return "an unrecorded number of"
+	}
+	return s
+}
 
 // clean drops the placeholders Windows writes where it has nothing to say, so
 // that a report never shows an address of "-".

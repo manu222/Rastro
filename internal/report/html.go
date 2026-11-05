@@ -196,6 +196,17 @@ at <code>{{ .Process }}</code>, record {{ .Origin.Number }} of <code>{{ .Origin.
 from {{ . }}{{ end }}{{ with .Workstation }} on {{ . }}{{ end }}{{ with .Account }} as {{ . }}{{ end }},
 record {{ .Origin.Number }} of <code>{{ .Origin.File }}</code>.</p>
 {{ end }}
+{{ with $f.Other }}
+{{ if .FlowID }}<p>On the wire this connection is flow <code>{{ .FlowID }}</code>{{ with .Service }}, which the
+network read as {{ . }}{{ end }}{{ if or .Sent .Received }}, {{ with .Sent }}{{ . }}{{ else }}an unrecorded number of{{ end }}
+bytes out and {{ with .Received }}{{ . }}{{ else }}an unrecorded number{{ end }} back{{ end }}{{ with .State }},
+state {{ . }}{{ end }} &mdash; record {{ .Origin.Number }} of <code>{{ .Origin.File }}</code>.
+<span class="meta">{{ .Why }}.</span></p>
+{{ else if .Process }}<p>The host records this connection being opened by <code>{{ .Process }}</code>{{ with .Account }}
+as {{ . }}{{ end }}. <span class="meta">{{ .Why }}.</span></p>
+{{ else if .Unresolved }}<p class="meta">The other source has nothing to add: {{ .Unresolved }}.</p>
+{{ end }}
+{{ end }}
 {{ with $f.Techniques }}<p class="meta">ATT&amp;CK: {{ range $i, $t := . }}{{ if $i }}, {{ end }}{{ $t }}{{ end }}</p>{{ end }}
 <p class="meta">Record {{ $f.Origin.Number }} of <code>{{ $f.Origin.File }}</code>.</p>
 </div>

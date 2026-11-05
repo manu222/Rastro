@@ -44,12 +44,16 @@ type Limits struct {
 	// MaxDepth stops walking a lineage after this many steps, so that a cycle
 	// in damaged evidence cannot spin for ever.
 	MaxDepth int
+	// MaxFlows bounds each half of the connection join. A busy day of network
+	// evidence is many more flows than process creations, which is why it has
+	// a limit of its own rather than sharing one.
+	MaxFlows int
 }
 
 // DefaultLimits are generous for real evidence and small enough that a
 // malformed file cannot exhaust the machine.
 func DefaultLimits() Limits {
-	return Limits{MaxProcesses: 2_000_000, MaxLogons: 500_000, MaxDepth: 32}
+	return Limits{MaxProcesses: 2_000_000, MaxLogons: 500_000, MaxDepth: 32, MaxFlows: 20_000_000}
 }
 
 // Index holds what can be an ancestor.
@@ -66,10 +70,16 @@ type Index struct {
 
 	logons map[string]*Logon
 
+	// The two halves of the connection join, each keyed by the five-tuple. See
+	// flow.go for why that is the key and the time is not.
+	flows     map[string][]*Flow
+	hostConns map[string][]*Host
+
 	// Dropped counts what the limits refused to record, so that a lineage that
 	// breaks because of a limit can say that rather than look like missing
 	// evidence.
-	Dropped int
+	Dropped      int
+	DroppedFlows int
 }
 
 // Process is a creation, reduced to what a lineage needs.
@@ -117,6 +127,8 @@ func New() *Index {
 		byGUID:    map[string]*Process{},
 		byPIDHost: map[string][]*Process{},
 		logons:    map[string]*Logon{},
+		flows:     map[string][]*Flow{},
+		hostConns: map[string][]*Host{},
 	}
 }
 
@@ -134,6 +146,21 @@ func (ix *Index) Observe(e *event.Event) {
 	case event.ClassAuth:
 		if e.Action == "logon" {
 			ix.observeLogon(e)
+		}
+	case event.ClassNetwork:
+		// Only the two records that are an account of a connection: Zeek's
+		// conn.log row and the host's own network-connection event. A DNS
+		// record carries the same five-tuple and is not an account of the
+		// flow, so indexing it would put a query where a connection belongs.
+		switch e.Action {
+		case "connection":
+			if key, _, ok := tupleOf(e); ok {
+				ix.observeFlow(e, key)
+			}
+		case "network connection":
+			if key, _, ok := tupleOf(e); ok {
+				ix.observeHostConn(e, key)
+			}
 		}
 	}
 }

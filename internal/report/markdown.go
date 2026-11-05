@@ -262,6 +262,35 @@ func writeFindingMarkdown(out *writer, n int, f Finding) {
 		out.blank()
 	}
 
+	// The other half of the connection. One sentence, because this is the
+	// summary level of the report: the detail of the flow is in the record the
+	// line points at.
+	if o := f.Other; o != nil {
+		switch {
+		case o.FlowID != "":
+			line := "On the wire this connection is flow `" + o.FlowID + "`"
+			if o.Service != "" {
+				line += ", which the network read as " + o.Service
+			}
+			if o.Sent != "" || o.Received != "" {
+				line += fmt.Sprintf(", %s bytes out and %s back", orDash(o.Sent), orDash(o.Received))
+			}
+			if o.State != "" {
+				line += ", state " + o.State
+			}
+			out.line("%s — record %d of `%s`. %s.", line, o.Origin.Number, o.Origin.File, o.Why)
+		case o.Process != "":
+			line := "The host records this connection being opened by `" + o.Process + "`"
+			if o.Account != "" {
+				line += " as " + o.Account
+			}
+			out.line("%s. %s.", line, o.Why)
+		case o.Unresolved != "":
+			out.line("The other source has nothing to add: %s.", o.Unresolved)
+		}
+		out.blank()
+	}
+
 	if len(f.Techniques) > 0 {
 		out.line("ATT&CK: %s", strings.Join(f.Techniques, ", "))
 		out.blank()

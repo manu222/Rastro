@@ -56,6 +56,13 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 	}
 	fmt.Printf("Ancestors known : %d process creation(s), %d logon session(s)\n",
 		diag.Processes, diag.Logons)
+	// Both halves of the connection join, side by side. Either one at zero
+	// means the join cannot find anything, which is worth seeing before
+	// wondering why no finding mentions a flow.
+	if diag.Flows > 0 || diag.HostConns > 0 {
+		fmt.Printf("Connections     : %d flow(s) on the wire, %d opened by a named process\n",
+			diag.Flows, diag.HostConns)
+	}
 
 	fmt.Printf("\nFiles read      : %d\n", r.Evidence.Files)
 	fmt.Printf("Records         : %d\n", r.Evidence.Records)
@@ -186,6 +193,42 @@ func printFinding(f report.Finding) {
 		fmt.Printf(" as %s, record %d of %s\n",
 			f.Entry.Account, f.Entry.Origin.Number, f.Entry.Origin.File)
 	}
+
+	// What the other source saw of the same connection. The diagnostic view
+	// shows the unresolved case too: this command exists to check that the
+	// machinery is doing what it should, and a join that found nothing is as
+	// much of an answer as one that found something.
+	if o := f.Other; o != nil {
+		switch {
+		case o.FlowID != "":
+			fmt.Printf("    on the wire: flow %s", o.FlowID)
+			if o.Service != "" {
+				fmt.Printf(", read as %s", o.Service)
+			}
+			if o.Sent != "" || o.Received != "" {
+				fmt.Printf(", %s bytes out and %s back", orUnknown(o.Sent), orUnknown(o.Received))
+			}
+			if o.State != "" {
+				fmt.Printf(", state %s", o.State)
+			}
+			fmt.Printf(", record %d of %s\n", o.Origin.Number, o.Origin.File)
+		case o.Process != "":
+			fmt.Printf("    opened by %s", o.Process)
+			if o.Account != "" {
+				fmt.Printf(" as %s", o.Account)
+			}
+			fmt.Println()
+		case o.Unresolved != "":
+			fmt.Printf("    the other source has nothing to add: %s\n", o.Unresolved)
+		}
+	}
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "?"
+	}
+	return s
 }
 
 // truncate shortens a value for a diagnostic line.

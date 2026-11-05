@@ -33,6 +33,12 @@ type Diagnostics struct {
 	Evaluations int64
 	Processes   int
 	Logons      int
+	// The two halves of the connection join, which are worth seeing next to
+	// each other: a run with flows and no host connections, or the other way
+	// round, is a run where the join could not have found anything, and that
+	// is a property of the evidence rather than a fault.
+	Flows     int
+	HostConns int
 }
 
 func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagnostics, error) {
@@ -69,6 +75,7 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		return in, nil, diag, err
 	}
 	diag.Processes, diag.Logons = lineage.Size()
+	diag.Flows, diag.HostConns = lineage.Flows()
 
 	index := newRuleIndex(loaded.Rules)
 	hosts := map[string]bool{}
@@ -116,6 +123,8 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 				m.Lineage, m.Complete = lineage.Ancestry(e)
 				m.Changes = correlate.Escalations(m.Lineage)
 				m.Entry, m.EntryWho = lineage.Entry(m.Lineage)
+				// The other half of the connection, when the finding is about one.
+				m.Peer = lineage.Connection(e)
 				matches = append(matches, m)
 			}
 			return nil
