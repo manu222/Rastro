@@ -2,6 +2,7 @@
 tools/
 datasets/
 datasets-linux/
+datasets-compound/
 
 # --- Analysis output ---
 *.csv

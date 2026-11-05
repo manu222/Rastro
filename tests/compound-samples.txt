@@ -1,0 +1,62 @@
+# Host and network evidence of the same machine, pinned to one commit of
+# OTRF/Security-Datasets (MIT).
+#
+# Everything else in this repository reads one kind of evidence at a time. This
+# corpus is the one that cannot be answered by one kind: each campaign is a
+# Windows host and the packet capture of the same wire, for the same minutes,
+# so a connection seen on the network can be attributed to the process that
+# opened it. The seven campaigns differ only in how the credentials were
+# stolen at the end; the way in is the same, which is what makes them useful as
+# a set rather than as one sample.
+#
+# Two halves per campaign:
+#
+#   *_lsass_memory_dump.zip            the host, as a log shipper wrote it:
+#                                      Windows events one JSON object per line
+#   *_lsass_memory_dump_zeek_logs.zip  the network, as Zeek wrote it: the
+#                                      tab-separated logs with their headers
+#
+# The packet captures are not fetched. Zeek's logs are derived from them and
+# are what the tool reads; the pcapng files are between 2 MB and 60 MB each and
+# would add nothing a reader here can use.
+#
+# The host half is JSON rather than EVTX. These datasets were collected through
+# a shipper rather than by copying the channel off the disk, which is also how
+# most evidence arrives in practice, and it is worth saying what that costs: the
+# shipper's own `@timestamp` on every record of this corpus sits exactly 19
+# hours from the time the event itself carries. The event's own time is the one
+# to read.
+#
+# Format: one repository path per line. Blank lines and # are ignored. The
+# archives are unpacked into datasets-compound/<campaign>/, the host half as
+# host.json and the Zeek logs under their own names.
+
+commit d9d40ef123d2c87d5d3df28c96bcab4f0faccc87
+
+# Mimikatz sekurlsa::logonpasswords, through Meterpreter's kiwi
+datasets/compound/LSASS_campaign_01/metasploit_logonpasswords_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_01/metasploit_logonpasswords_lsass_memory_dump_zeek_logs.zip
+
+# procdump
+datasets/compound/LSASS_campaign_02/metasploit_procdump_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_02/metasploit_procdump_lsass_memory_dump_zeek_logs.zip
+
+# comsvcs.dll MiniDump, which rules/windows already has a rule for
+datasets/compound/LSASS_campaign_03/metasploit_comsvcs_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_03/metasploit_comsvcs_lsass_memory_dump_zeek_logs.zip
+
+# PowerSploit Out-Minidump
+datasets/compound/LSASS_campaign_04/metasploit_out-minidump_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_04/metasploit_out-minidump_lsass_memory_dump_zeek_logs.zip
+
+# SharpDump
+datasets/compound/LSASS_campaign_05/metasploit_sharpdump_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_05/metasploit_sharpdump_lsass_memory_dump_zeek_logs.zip
+
+# Outflank Dumpert, which calls the syscalls directly
+datasets/compound/LSASS_campaign_06/metasploit_outflank-dumpert_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_06/metasploit_outflank-dumpert_lsass_memory_dump_zeek_logs.zip
+
+# nanodump
+datasets/compound/LSASS_campaign_07/metasploit_nanodump_lsass_memory_dump.zip
+datasets/compound/LSASS_campaign_07/metasploit_nanodump_lsass_memory_dump_zeek_logs.zip
