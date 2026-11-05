@@ -81,11 +81,15 @@ type FieldTest struct {
 //
 // The comparison is case-insensitive because the vocabulary is written by hand
 // in thousands of rules and "Windows" and "windows" are the same platform.
-func (c *Compiled) Applies(product, service, category string) bool {
+// Several categories are passed because several can be right at once. A Sysmon
+// 13 is a registry_set to a rule that cares what was written and a
+// registry_event to one that only cares that the registry was touched, and both
+// rules are correct. One of them matching is enough.
+func (c *Compiled) Applies(product, service string, categories ...string) bool {
 	ls := c.Rule.Logsource
 	return matchesPart(ls.Product, product) &&
 		matchesPart(ls.Service, service) &&
-		matchesPart(ls.Category, category)
+		matchesOne(ls.Category, categories)
 }
 
 func matchesPart(want, have string) bool {
@@ -93,6 +97,18 @@ func matchesPart(want, have string) bool {
 		return true
 	}
 	return strings.EqualFold(want, have)
+}
+
+func matchesOne(want string, have []string) bool {
+	if want == "" {
+		return true
+	}
+	for _, h := range have {
+		if strings.EqualFold(want, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // Result is what a directory of rules came to.

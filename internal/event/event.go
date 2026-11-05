@@ -275,9 +275,15 @@ type Origin struct {
 	// in it to stop it matching an http record that happens to have a field of
 	// the same name. Running a rule against evidence it was not written for is
 	// not a near miss, it is a false positive with a rule's name on it.
-	Product  string
-	Service  string
-	Category string
+	// Categories is a list because several can be right at once: Sigma calls a
+	// Sysmon 13 a registry_set and a registry_event, and a rule written for
+	// either one is written for this record. The rules in this repository state
+	// the event identifier in their detection and need none of this; most of
+	// the public corpus states it nowhere else, and 2,286 of SigmaHQ's rules
+	// are reachable only through this field.
+	Product    string
+	Service    string
+	Categories []string
 }
 
 // Fields holds the event exactly as the source recorded it, with the source's

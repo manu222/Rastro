@@ -350,7 +350,7 @@ level: low
 
 	_, events, _ := read(t, "host.json", sysmonCreate+"\n")
 	e := events[0]
-	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category) {
+	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) {
 		t.Fatal("a Windows rule did not apply to a Windows record")
 	}
 	if !c.Matches(e.Raw) {
@@ -380,7 +380,7 @@ level: low
 	if err != nil {
 		t.Fatal(err)
 	}
-	if zc.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category) {
+	if zc.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) {
 		t.Error("a Zeek rule was offered a Windows record")
 	}
 }

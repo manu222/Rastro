@@ -326,7 +326,7 @@ func (idx *ruleIndex) forEvent(e *event.Event) []*sigma.Compiled {
 // which is more explicit than a logsource and cannot be undone by a reader
 // labelling a record differently.
 func applies(c *sigma.Compiled, e *event.Event) bool {
-	return c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category)
+	return c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...)
 }
 
 // requiredEventIDs reads the identifiers a rule cannot fire without.

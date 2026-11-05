@@ -116,6 +116,18 @@ var (
 	// decision for when the report shows what pivoting by hash should do.
 	hashOf  = Ref{Kind: event.KindHash, Field: "Hashes", Role: "image"}
 	imageOf = Ref{Kind: event.KindFile, Field: "Image", Role: "image"}
+
+	// Sysmon writes the account on nearly every event, in one field holding
+	// DOMAIN\user. It was missing from most of the entries below because the
+	// pinned corpus predates it: the version that produced those records only
+	// wrote it on a process creation, so there was nothing to read and nothing
+	// to write down. The compound corpus is newer and carries it on twenty
+	// event types, and until this was added the report said "an account this
+	// evidence does not name" about records that name it on their own line.
+	//
+	// Adding it costs nothing on the older evidence. A field that is not in the
+	// record renders as absent, which is what it was before.
+	sysmonUser = Account{Name: "User"}
 )
 
 // mappings is keyed by provider and event id.
@@ -135,6 +147,7 @@ var mappings = map[string]map[int]Mapping{
 			Class:    event.ClassFile,
 			Action:   "file creation time changed",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindFile, Field: "TargetFilename", Role: "target"}},
 		},
 		3: {
@@ -161,6 +174,7 @@ var mappings = map[string]map[int]Mapping{
 			Class:    event.ClassProcess,
 			Action:   "process ended",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf},
 		},
 		6: {
@@ -174,6 +188,7 @@ var mappings = map[string]map[int]Mapping{
 			Class:    event.ClassModule,
 			Action:   "module loaded",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindFile, Field: "ImageLoaded", Role: "module"}, hashOf},
 		},
 		8: {
@@ -181,6 +196,10 @@ var mappings = map[string]map[int]Mapping{
 			Action: "thread created in another process",
 			Actor:  Proc{Image: "SourceImage", PID: "SourceProcessId", GUID: "SourceProcessGuid"},
 			Target: Proc{Image: "TargetImage", PID: "TargetProcessId", GUID: "TargetProcessGuid"},
+			// Two accounts on one record: the one the creating process runs
+			// as, and the one the process it reached into runs as.
+			User:    Account{Name: "SourceUser"},
+			Subject: Account{Name: "TargetUser"},
 			Entities: []Ref{
 				{Kind: event.KindFile, Field: "SourceImage", Role: "image"},
 				{Kind: event.KindFile, Field: "TargetImage", Role: "target image"},
@@ -194,6 +213,10 @@ var mappings = map[string]map[int]Mapping{
 			// corpus; neither is a typo in this file.
 			Actor:  Proc{Image: "SourceImage", PID: "SourceProcessId", GUID: "SourceProcessGUID"},
 			Target: Proc{Image: "TargetImage", PID: "TargetProcessId", GUID: "TargetProcessGUID"},
+			// Two accounts on one record: the one the opening process runs
+			// as, and the one the process it opened runs as.
+			User:    Account{Name: "SourceUser"},
+			Subject: Account{Name: "TargetUser"},
 			Entities: []Ref{
 				{Kind: event.KindFile, Field: "SourceImage", Role: "image"},
 				{Kind: event.KindFile, Field: "TargetImage", Role: "target image"},
@@ -203,6 +226,7 @@ var mappings = map[string]map[int]Mapping{
 			Class:    event.ClassFile,
 			Action:   "file created",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindFile, Field: "TargetFilename", Role: "created"}},
 		},
 		12: {
@@ -210,6 +234,7 @@ var mappings = map[string]map[int]Mapping{
 			Action:   "registry key created or deleted",
 			Activity: "EventType",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindRegistry, Field: "TargetObject", Role: "key"}},
 		},
 		13: {
@@ -217,6 +242,7 @@ var mappings = map[string]map[int]Mapping{
 			Action:   "registry value set",
 			Activity: "EventType",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindRegistry, Field: "TargetObject", Role: "value"}},
 		},
 		16: {
@@ -227,12 +253,14 @@ var mappings = map[string]map[int]Mapping{
 			Class:    event.ClassPipe,
 			Action:   "named pipe created",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindPipe, Field: "PipeName", Role: "created"}},
 		},
 		18: {
 			Class:    event.ClassPipe,
 			Action:   "named pipe connected",
 			Actor:    sysmonActor,
+			User:     sysmonUser,
 			Entities: []Ref{imageOf, {Kind: event.KindPipe, Field: "PipeName", Role: "connected"}},
 		},
 		// The three WMI events get a class, an actor and a verb, and no

@@ -411,12 +411,13 @@ func (rec Record) Event(path string, line int64) *event.Event {
 		Time:     rec.Time,
 		Activity: rec.Type,
 		Origin: event.Origin{
-			Path:      path,
-			Record:    line,
-			Producer:  "auditd",
-			TimeField: "audit_time",
-			Product:   "linux",
-			Service:   "auditd",
+			Path:       path,
+			Record:     line,
+			Producer:   "auditd",
+			TimeField:  "audit_time",
+			Product:    "linux",
+			Service:    "auditd",
+			Categories: categoriesOf(rec),
 		},
 		Raw: event.Fields(rec.Fields),
 	}
@@ -504,6 +505,23 @@ func fieldOf(rec Record, key string) event.Field {
 // written against. A type that is not here keeps its fields and gets no class,
 // which is the honest answer: the record was read and nothing is claimed about
 // what it was.
+// categoriesOf names the Sigma category a record answers to.
+//
+// Sigma lets a rule say `product: linux` and `category: process_creation`
+// without naming a record type, and 123 of SigmaHQ's rules do. An EXECVE is
+// what those rules mean: it is the record auditd writes when a program is run,
+// with one field per argument. Nothing is claimed for the other record types,
+// not because they have no equivalent but because claiming one would put rules
+// in front of records their authors never saw — the two obvious candidates,
+// linux/file_event and linux/network_connection, are eight and five rules and
+// each needs a record of its own to check the field names against.
+func categoriesOf(rec Record) []string {
+	if rec.Type == "EXECVE" {
+		return []string{"process_creation"}
+	}
+	return nil
+}
+
 func classify(rec Record, e *event.Event) {
 	switch rec.Type {
 	case "EXECVE":

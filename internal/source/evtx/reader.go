@@ -211,6 +211,10 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 			// Sysmon says service: sysmon. The channel is where that comes
 			// from, lower-cased and with the path dropped.
 			Service: serviceOf(flat),
+			// And the categories are the names Sigma gives to the provider and
+			// event id together, which is the only way a rule saying
+			// category: process_access can reach a Sysmon 10.
+			Categories: winevent.Categories(flat),
 		},
 		Raw: event.Fields(flat.Fields),
 	}

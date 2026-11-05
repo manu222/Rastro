@@ -236,7 +236,7 @@ level: medium
 
 	events, _ := read(t, "dns.log", dnsLog)
 	e := events[0]
-	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category) {
+	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) {
 		t.Fatal("a Zeek rule did not apply to a Zeek record")
 	}
 	if !c.Matches(e.Raw) {
@@ -257,7 +257,7 @@ level: medium
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wc.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category) {
+	if wc.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) {
 		t.Error("a Windows rule was offered a Zeek record")
 	}
 }
