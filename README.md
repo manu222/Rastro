@@ -7,13 +7,13 @@ Windows event logs, system logs — and it returns a single correlated timeline
 mapped to MITRE ATT&CK, in a report that reads equally well for a junior analyst
 and for the person who has to make the call.
 
-> **Status: it works end to end on Windows event logs and Linux audit logs.**
-> Point it at a directory of evidence and it reads the records, works out what
-> they mean, runs Sigma rules of its own against them, walks back up the process
-> chain to say who was behind each finding and where they came in, and writes a
-> report as Markdown, HTML or JSON. What is missing is a network source — there
-> is no pcap reader yet — and correlation *across* sources, which is what the
-> timeline needs before it can tie a DNS lookup to a process creation.
+> **Status: it reads Windows event logs, Linux audit logs and Zeek logs, end to
+> end.** Point it at a directory of evidence and it reads the records, works out
+> what they mean, runs Sigma rules of its own against them, walks back up the
+> process chain to say who was behind each finding and where they came in, and
+> writes a report as Markdown, HTML or JSON. What is missing is the correlation
+> *across* sources — the join that ties a DNS lookup to the process that made
+> it — and rules of this repository's own for the network side.
 
 ## Why
 
@@ -90,6 +90,7 @@ things and a report must not blur them.
 | `cmd/rastro/` | The tool: `rastro read`, `rastro detect` and `rastro report` |
 | `internal/source/evtx/` | Reads Windows event logs, with per-file limits and a damaged-chunk count that never aborts a file |
 | `internal/source/auditd/` | Reads Linux audit logs, in the three styles the corpus contains |
+| `internal/source/zeek/` | Reads Zeek logs, both the TSV and the JSON form |
 | `internal/winevent/` | What a Windows record means: flattening, 46 mapped event ids, the translations |
 | `internal/normalise/` | Restores the text a provider wrote when the parser changed its shape |
 | `internal/event/` | The event model, including where each value came from |
@@ -104,6 +105,16 @@ things and a report must not blur them.
 | `tools/`, `datasets/`, `datasets-linux/` | External tools and public evidence, not versioned |
 
 ## The rule engine
+
+A rule is only run against the evidence it was written for. Most of the public
+corpus states that in its `logsource` and nowhere else — a Zeek rule for
+`dns.log` has nothing in its detection to stop it matching an HTTP record with
+a field of the same name — so every event carries what kind of evidence it is,
+in Sigma's own vocabulary, and a rule that names a product or a service only
+sees matching records. A rule that names nothing applies everywhere, which is
+what keeps the rules here working: they identify their evidence inside the
+detection, which is more explicit and cannot be undone by a reader labelling a
+record differently.
 
 Rules are loaded, compiled and run in this repository rather than handed to an
 external program. The reason is not pride: a tool that shells out to another
@@ -246,9 +257,15 @@ It is that the gaps are written down.
   over a full capture of one machine they reach the logon. The report counts
   how many stopped short rather than letting the reader assume they reached the
   beginning.
-- **No network source yet**, so nothing here can tie a DNS lookup to the process
-  that made it. That is the correlation the project exists for and it is not
-  built.
+- **The network source is read but not yet joined.** Zeek logs come in, their
+  rules run against them, and their findings appear in the report — but nothing
+  yet ties a DNS lookup to the process that made it. The join exists in
+  principle: a Zeek `conn.log` row and a Sysmon 3 carry the same five addresses
+  and ports, and Zeek's `uid` ties its own logs to each other. That is the
+  correlation the project exists for, and it is the next thing.
+- **No rules of this repository for the network side.** The public Zeek rules
+  load and run, and they are somebody else's work; the thirteen rules here are
+  all host-based.
 
 Each of these also lives in the rule, the manifest or the code it belongs to,
 not only here.

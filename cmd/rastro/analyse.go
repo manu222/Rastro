@@ -14,6 +14,7 @@ import (
 	"github.com/manu222/rastro/internal/sigma"
 	"github.com/manu222/rastro/internal/source/auditd"
 	"github.com/manu222/rastro/internal/source/evtx"
+	"github.com/manu222/rastro/internal/source/zeek"
 )
 
 // analyse is the one path through the evidence, and both commands use it.
@@ -60,8 +61,9 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	// listing.
 	windows := evtx.New(root)
 	linux := auditd.New(root)
+	network := zeek.New(root)
 	lineage := correlate.New()
-	if err := walkEvidence(root, windows, linux, lineage.Observe); err != nil {
+	if err := walkEvidence(root, windows, linux, network, lineage.Observe); err != nil {
 		return in, nil, diag, err
 	}
 	diag.Processes, diag.Logons = lineage.Size()
@@ -135,6 +137,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			// on the Windows side, so it is counted the same way.
 			in.UnreadableRecords += stats.Unparsed
 			failure = stats.FirstFailure
+		case sourceZeek:
+			stats, err := network.ReadFile(path, visit)
+			rerr = err
+			in.UnreadableRecords += stats.Unparsed + stats.Malformed
+			failure = stats.FirstFailure
 		}
 		if rerr != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
@@ -192,17 +199,38 @@ const (
 	sourceNone sourceKind = iota
 	sourceEVTX
 	sourceAuditd
+	sourceZeek
 )
 
 func sourceOf(path string) sourceKind {
+	base := strings.ToLower(filepath.Base(path))
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".evtx":
 		return sourceEVTX
 	case ".log":
-		// An audit log by convention rather than by format. A .log that turns
-		// out to hold something else is counted as unread lines rather than
-		// silently producing nothing, which is why the reader counts them.
+		// Two text formats share the extension, and which one a file is gets
+		// decided by its name rather than by opening it. Zeek names its logs
+		// after what they contain — conn.log, dns.log, http.log — and that is
+		// also what a rule asks for in its logsource, so the name is load
+		// bearing either way. Anything else called .log is read as an audit
+		// log, and a file that turns out to be neither is counted as unread
+		// lines rather than silently producing nothing.
+		if zeekLogs[strings.TrimSuffix(base, ".log")] {
+			return sourceZeek
+		}
 		return sourceAuditd
 	}
 	return sourceNone
+}
+
+// The Zeek logs this tool knows what to do with. A name not in here is not
+// refused — it is read as an audit log, which will count its lines as unread
+// and say so — because guessing wrong in the quiet direction is the failure
+// this project spends its time avoiding.
+var zeekLogs = map[string]bool{
+	"conn": true, "dns": true, "http": true, "ssl": true, "files": true,
+	"smb_files": true, "smb_mapping": true, "dce_rpc": true, "kerberos": true,
+	"ntlm": true, "notice": true, "weird": true, "x509": true, "rdp": true,
+	"ssh": true, "smtp": true, "ftp": true, "dhcp": true, "sip": true,
+	"snmp": true, "software": true, "tunnel": true, "traceroute": true,
 }
