@@ -1,6 +1,9 @@
 package winevent
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Windows writes some of its most important values as numbers and as
 // references into a message table. A report that shows them raw asks the
@@ -175,13 +178,24 @@ func Explain(field, value string) (string, bool) {
 
 // statusName translates the logon failure codes of a 4625.
 //
-// Windows writes them in decimal, so 3221225581 has to be read as 0xC000006D
-// before it means anything. These four are the ones that distinguish a user
-// typing a wrong password from an attacker spraying names at a domain
-// controller, which is a distinction a triage report exists to make. Their
-// values are NTSTATUS constants, not a Windows version's idea of them.
+// Both spellings are accepted, and the reason is a small lesson. These codes
+// were decimal here until the audit found that the Security provider writes
+// them in hexadecimal and the table was corrected; a translation that only
+// read decimals would have stopped working at exactly the moment the field
+// started being right. A function that depends on a neighbouring table's shape
+// should say so and handle both rather than quietly depend on one.
+//
+// These five are the ones that distinguish a user typing a wrong password from
+// an attacker spraying names at a domain controller, which is a distinction a
+// triage report exists to make. They are NTSTATUS constants, not a Windows
+// version's idea of them.
 func statusName(v string) (string, bool) {
-	n, err := strconv.ParseUint(v, 10, 32)
+	text := strings.TrimSpace(v)
+	base := 10
+	if len(text) > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') {
+		text, base = text[2:], 16
+	}
+	n, err := strconv.ParseUint(text, base, 32)
 	if err != nil {
 		return v, false
 	}

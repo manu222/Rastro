@@ -1,6 +1,7 @@
 package winevent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/manu222/rastro/internal/event"
@@ -235,11 +236,19 @@ func TestLogonTypeIsTranslatedAndUnknownOnesAreNot(t *testing.T) {
 }
 
 func TestLogonFailureCodesAreReadable(t *testing.T) {
-	if got, ok := Explain("SubStatus", "3221225578"); !ok || got != "wrong password" {
-		t.Errorf("0xC000006A: %q", got)
+	// Both spellings. The field was decimal here until the audit found that
+	// the provider writes it in hexadecimal; a translation that only read one
+	// of them would have stopped working the moment the other became correct.
+	for _, in := range []string{"3221225578", "0xC000006A", "0xc000006a"} {
+		if got, ok := Explain("SubStatus", in); !ok || got != "wrong password" {
+			t.Errorf("%s: %q", in, got)
+		}
 	}
 	if got, ok := Explain("Status", "3221225572"); !ok || got != "no such user" {
 		t.Errorf("0xC0000064: %q", got)
+	}
+	if got, ok := Explain("Status", "0xC0000064"); !ok || got != "no such user" {
+		t.Errorf("hex form: %q", got)
 	}
 	// A code with no entry keeps its digits. An analyst can look that up; a
 	// wrong label is not something they can catch.
@@ -307,6 +316,47 @@ func TestMessageReferencesAreRecognisedAndMostlyUntranslated(t *testing.T) {
 	for _, code := range []string{"%%7688", "%%1936", "%%1937", "%%12544"} {
 		if got, ok := Explain("Properties", code); ok || got != code {
 			t.Errorf("an unresolved code was given a label: %s -> %q", code, got)
+		}
+	}
+}
+
+// Sysmon writes every digest of a file into one field. Kept whole it is a
+// two-hundred-character entity that groups nothing anybody would search for;
+// split, each digest is something an analyst can paste into a lookup.
+func TestHashesBecomeOneEntityPerDigest(t *testing.T) {
+	rec := map[string]any{
+		"Event": map[string]any{
+			"System": map[string]any{
+				"Provider": map[string]any{"Name": "Microsoft-Windows-Sysmon"},
+				"EventID":  map[string]any{"Value": int64(1)},
+				"Computer": "IEWIN7",
+			},
+			"EventData": map[string]any{
+				"Image":       `C:\Users\Public\a.exe`,
+				"CommandLine": "a.exe",
+				"Hashes": "SHA1=F3BA3415DD068A8871F285570BEA2E29874CBFF1," +
+					"MD5=C73BA51880F5A7FB20C84185A23212EF," +
+					"SHA256=01B407AF0200B66A34D9B1FA6D9EAAB758EFA36A36BB99B554384F59F8690B1A",
+			},
+		},
+	}
+	e := classify(t, rec)
+
+	var digests []string
+	for _, ent := range e.Entities {
+		if ent.Kind == event.KindHash {
+			digests = append(digests, ent.Field.Value)
+		}
+	}
+	if len(digests) != 3 {
+		t.Fatalf("want one entity per digest, got %d: %v", len(digests), digests)
+	}
+	for _, d := range digests {
+		if len(d) > 80 {
+			t.Errorf("a digest entity is still a concatenation: %s", d)
+		}
+		if !strings.Contains(d, "=") {
+			t.Errorf("the algorithm was stripped from %q, and a bare hex string does not say what it is", d)
 		}
 	}
 }

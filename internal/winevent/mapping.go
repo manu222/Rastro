@@ -570,6 +570,18 @@ func Classify(f Flat, e *event.Event) {
 	e.Add(event.KindSession, "subject", valueOf(f, m.Subject.Logon))
 
 	for _, r := range m.Entities {
+		if r.Kind == event.KindHash {
+			// Sysmon writes every digest of a file into one field, as
+			// SHA1=...,MD5=...,SHA256=...,IMPHASH=.... Kept whole it is a
+			// two-hundred-character entity that groups nothing a person would
+			// search for and reads as noise in a report. Split, each digest is
+			// something an analyst can paste into a threat intelligence
+			// lookup, which is the only reason to record a hash at all.
+			for _, digest := range strings.Split(text(f, r.Field), ",") {
+				e.Add(r.Kind, r.Role, valueOf2(strings.TrimSpace(digest)))
+			}
+			continue
+		}
 		e.Add(r.Kind, r.Role, valueOf(f, r.Field))
 	}
 }
@@ -601,6 +613,16 @@ func accountOf(f Flat, a Account) event.Field {
 		return event.Seen(text(f, a.SID))
 	}
 	return event.Field{}
+}
+
+// valueOf2 wraps a value that was derived from a field rather than read from
+// one. It is still observed: splitting a list the provider wrote on the
+// separator the provider used is not a deduction.
+func valueOf2(v string) event.Field {
+	if v == "" || Unavailable(v) {
+		return event.Field{}
+	}
+	return event.Seen(v)
 }
 
 func valueOf(f Flat, field string) event.Field {
