@@ -82,7 +82,10 @@ func compareAgainstManifests(t *testing.T, engine, corpus string, read readRecor
 
 	evidence := filepath.Join(root, corpus)
 	if _, err := os.Stat(evidence); err != nil {
-		t.Skipf("the %s corpus is not on this machine; see tests/README.md", corpus)
+		// A developer without the corpus sees a skip; CI, which fetches it at
+		// a pinned commit, sees a failure. Otherwise a broken setup would
+		// report success by running nothing at all.
+		skipOrFail(t, fmt.Sprintf("the %s corpus is not on this machine (see tests/README.md)", corpus))
 	}
 	// A corpus is often a link to wherever the evidence actually lives, and
 	// filepath.WalkDir does not follow a symbolic link - not even the one it is

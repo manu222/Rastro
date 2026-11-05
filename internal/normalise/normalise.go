@@ -375,11 +375,29 @@ func (n *Normaliser) note(producer, field, shape string, declared Form, sample s
 // Gaps returns what the normaliser did not understand, sorted so that two runs
 // over the same evidence produce the same list.
 //
-// This is the whole point of the package being able to admit ignorance. In CI
-// the list has to be empty against the pinned corpus. In a real case it goes in
-// the report: three fields nobody declared is not a crash, but it is a reason
-// to trust the rules that touch them a little less, and the analyst is the one
-// who should decide that.
+// This is the whole point of the package being able to admit ignorance. In a
+// real case the list goes in the report: three fields nobody declared is not a
+// crash, but it is a reason to trust the rules that touch them a little less,
+// and the analyst is the one who should decide that.
+//
+// In CI the list is not required to be empty, and the reason is worth writing
+// down. The pinned corpus contains providers nobody has described — an ESENT
+// database, a SQL Server, an RPC trace — and describing all of them would be
+// weeks of work for events no rule touches. What CI requires instead is
+// narrower and more useful: a provider that HAS a table must have a complete
+// one. See Declares.
+// Declares reports whether a provider has a table at all.
+//
+// The audit rests on this distinction. A provider with a table is a provider
+// somebody has described, so a field of it arriving in a shape the table does
+// not cover is a gap in that description and worth failing a build over. A
+// provider with no table has never been described, so the same field is a known
+// absence and belongs in a list rather than in an error.
+func (n *Normaliser) Declares(producer string) bool {
+	_, ok := n.tables[producer]
+	return ok
+}
+
 func (n *Normaliser) Gaps() []Gap {
 	n.mu.Lock()
 	defer n.mu.Unlock()

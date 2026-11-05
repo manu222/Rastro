@@ -7,11 +7,13 @@ Windows event logs, system logs — and it returns a single correlated timeline
 mapped to MITRE ATT&CK, in a report that reads equally well for a junior analyst
 and for the person who has to make the call.
 
-> **Status: the Windows half works end to end.** It reads an evidence directory
-> of `.evtx` files, understands what the records mean, runs Sigma rules of its
-> own against them and says what fired and why. What is missing is the
-> correlation across sources, the report, and a reader for Linux audit logs.
-> There is no network source yet.
+> **Status: it works end to end on Windows event logs and Linux audit logs.**
+> Point it at a directory of evidence and it reads the records, works out what
+> they mean, runs Sigma rules of its own against them, walks back up the process
+> chain to say who was behind each finding and where they came in, and writes a
+> report as Markdown, HTML or JSON. What is missing is a network source — there
+> is no pcap reader yet — and correlation *across* sources, which is what the
+> timeline needs before it can tie a DNS lookup to a process creation.
 
 ## Why
 
@@ -40,15 +42,41 @@ Undeclared field shapes: 63
 
 $ rastro detect datasets/
 Rules loaded    : 13
+Ancestors known : 476 process creation(s), 23 logon session(s)
 Evaluations     : 127232  (4.1 rules per record on average)
 Findings        : 45
 
-  [HIGH] Windows Event Log Cleared
-    2019-03-25 09:09:14  DC1.insecurebank.local  record 1 of ...
-    audit log cleared by insecurebank\bob
-    because Channel = Security  (rule asked for Security)
-    because EventID = 1102  (rule asked for 1102)
+  [HIGH] Child Process Of A Windows Accessibility Tool
+    2019-03-19 20:58:44  PC01.example.corp  record 155 of Persistence/...
+    process created by NT AUTHORITY\SYSTEM
+    because ParentImage = C:\osk.exe  (rule asked for *\osk.exe)
+    how it got there:
+      C:\Windows\System32\smss.exe        NT AUTHORITY\SYSTEM   System
+        C:\Windows\System32\winlogon.exe  NT AUTHORITY\SYSTEM   System
+          C:\Windows\System32\Utilman.exe NT AUTHORITY\SYSTEM   System
+            C:\osk.exe                     NT AUTHORITY\SYSTEM   System
+      (the chain stops here: the parent's creation is not in this evidence)
 ```
+
+That chain is the tool doing the thing it exists for. The rule fired on one
+record; the four lines under it came from four others, found by following the
+process identifiers back up. And the path is the finding: the on-screen keyboard
+is at `C:\osk.exe` rather than in System32, and it was reached through
+`Utilman.exe`, which is the logon screen.
+
+The report is the same analysis written for somebody else to read:
+
+```
+$ rastro report -out report.html datasets/
+$ rastro report -sections entities,timeline datasets/      # to a terminal
+$ rastro report -out findings.json datasets/               # for a pipeline
+```
+
+Three renderings and three views, because where the analyst is sitting decides
+what is useful: Markdown in a terminal over SSH, a self-contained HTML page on a
+laptop or in an email, JSON for whatever comes next. The views are what is
+affected, how it unfolded, and what the attacker was doing; any one, any two, or
+all three.
 
 Every number in that output is there because the alternative is a tool that
 reports a confident zero. `0 unreadable` is a claim worth printing; so is
@@ -59,12 +87,15 @@ things and a report must not blur them.
 
 | Path | Contents |
 | --- | --- |
-| `cmd/rastro/` | The tool: `rastro read` and `rastro detect` |
+| `cmd/rastro/` | The tool: `rastro read`, `rastro detect` and `rastro report` |
 | `internal/source/evtx/` | Reads Windows event logs, with per-file limits and a damaged-chunk count that never aborts a file |
+| `internal/source/auditd/` | Reads Linux audit logs, in the three styles the corpus contains |
 | `internal/winevent/` | What a Windows record means: flattening, 46 mapped event ids, the translations |
 | `internal/normalise/` | Restores the text a provider wrote when the parser changed its shape |
 | `internal/event/` | The event model, including where each value came from |
 | `internal/sigma/` | Rule loader and engine |
+| `internal/correlate/` | Who was behind a finding, how it got there, and where it came in |
+| `internal/report/` | One report, three renderings, three views |
 | `rules/windows/`, `rules/linux/` | The detection rules |
 | `tests/` | One manifest per rule: which samples it must match, and how many times |
 | `templates/` | A rule skeleton per telemetry source, carrying the real field names |
@@ -192,6 +223,9 @@ It is that the gaps are written down.
 
 **In the evidence:**
 
+- **auditd carries no machine name** unless it was configured to, and the
+  samples were not, so findings from Linux evidence name no host. The file name
+  is not a hostname, however tempting.
 - **auditd records written as `unit= auditd`**, with a space after the equals
   sign, produce no `unit` field at all, so three of the eight events in one
   sample are invisible to the rule that looks for stopped services. A detection
@@ -207,9 +241,14 @@ It is that the gaps are written down.
   `%%7688` until they can be checked the same way. Two of them Windows itself
   declined to resolve. An untranslated code is a gap the reader can look up; a
   wrong label is one they cannot catch.
-- **No reader for Linux audit logs yet**, so the three auditd rules load, run
-  and report nothing. They show up as loaded and silent, which is the honest
-  way to say it.
+- **A process chain is only as long as the evidence.** Over a corpus of
+  single-technique samples most of them stop after one or two steps and say so;
+  over a full capture of one machine they reach the logon. The report counts
+  how many stopped short rather than letting the reader assume they reached the
+  beginning.
+- **No network source yet**, so nothing here can tie a DNS lookup to the process
+  that made it. That is the correlation the project exists for and it is not
+  built.
 
 Each of these also lives in the rule, the manifest or the code it belongs to,
 not only here.
@@ -255,12 +294,37 @@ It could not have fired under any circumstances, and it reported zero either
 way.
 
 The manifests are also what keeps the engine in this repository honest. They
-record what Hayabusa found: which rule, in which file, how many times. So one
-test runs Rastro's own engine over the same evidence and compares, **per rule
-and per file** — not per total, because a rule that fires the right number of
-times in the wrong places is wrong and a total would hide it. Both directions
-are checked: the files a manifest lists have to match, and the files it does not
-list have to be empty.
+record what the reference engines found: which rule, in which file, how many
+times. So one test runs Rastro's own engine over the same evidence and compares,
+**per rule and per file** — not per total, because a rule that fires the right
+number of times in the wrong places is wrong and a total would hide it. Both
+halves are covered, each against the engine its manifests came from, and both
+directions are checked: the files a manifest lists have to match, and the files
+it does not list have to be empty.
+
+Two more tests are the audit. One reads the whole corpus and fails on a single
+unreadable record, because three times during this project a change made records
+unreadable in bulk and the output was a confident number with nothing in it to
+say what was missing. The other is narrower: a provider that **has** a
+normalisation table must have a complete one. An empty gap list is not the bar —
+the corpus holds an ESENT database, a SQL Server and an RPC trace that nobody
+has described, and describing them would be weeks of work for events no rule
+touches. A field of Sysmon or of the Security channel arriving in a shape its
+table does not cover is different: it means the description is wrong, and a rule
+written against that field is matching something other than what its author
+believed.
+
+The coverage of the rule loader against the public corpus is a test too:
+
+```
+git clone --depth 1 https://github.com/SigmaHQ/sigma tools/sigmahq
+go test ./internal/sigma/ -run Corpus -v
+```
+
+`RASTRO_REQUIRE_TOOLS=1` turns a missing corpus or binary into a failure instead
+of a skip. A developer without the evidence sees skips; CI, which fetches both
+corpora at pinned commits, sees failures — because a broken setup that reports
+success by running nothing at all is the worst outcome a test suite can have.
 
 Two external engines are needed to build those expectations, because no single
 one reads every kind of evidence: Hayabusa for the Windows rules and EVTX,
