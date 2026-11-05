@@ -415,6 +415,8 @@ func (rec Record) Event(path string, line int64) *event.Event {
 			Record:    line,
 			Producer:  "auditd",
 			TimeField: "audit_time",
+			Product:   "linux",
+			Service:   "auditd",
 		},
 		Raw: event.Fields(rec.Fields),
 	}

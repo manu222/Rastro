@@ -58,6 +58,43 @@ type FieldTest struct {
 	Ref string
 }
 
+// Applies reports whether a rule was written for this kind of evidence.
+//
+// Sigma's logsource has three parts and a rule may state any of them or none.
+// An unstated part matches anything, which is the specification's own rule and
+// also the only safe reading: a rule that says only "product: windows" is
+// making a claim about the platform and none about the channel.
+//
+// A rule that states nothing at all applies everywhere. That is deliberate and
+// it is what keeps the rules of this repository working: they identify their
+// evidence inside the detection, which is more explicit than a logsource and
+// cannot be undone by a reader labelling a record differently.
+//
+// The other direction is strict: an event with no product does not match a
+// rule that asks for one. The lenient reading is tempting — it would mean a
+// reader that forgot to label its evidence still worked — and it is exactly
+// the wrong trade. A reader that forgets would then run every rule against
+// evidence none of them were written for, quietly. Strict turns the same
+// mistake into no findings at all, which is loud, and the audit asserts that
+// every reader labels what it produces so the mistake is caught in CI rather
+// than in a case.
+//
+// The comparison is case-insensitive because the vocabulary is written by hand
+// in thousands of rules and "Windows" and "windows" are the same platform.
+func (c *Compiled) Applies(product, service, category string) bool {
+	ls := c.Rule.Logsource
+	return matchesPart(ls.Product, product) &&
+		matchesPart(ls.Service, service) &&
+		matchesPart(ls.Category, category)
+}
+
+func matchesPart(want, have string) bool {
+	if want == "" {
+		return true
+	}
+	return strings.EqualFold(want, have)
+}
+
 // Result is what a directory of rules came to.
 type Result struct {
 	Rules []*Compiled

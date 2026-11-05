@@ -263,6 +263,21 @@ type Origin struct {
 	// better answer than the moment its record was written, and a timeline that
 	// mixes the two owes the reader an explanation of which it used where.
 	TimeField string
+
+	// Product, Service and Category say what kind of evidence this is, in the
+	// vocabulary Sigma uses for the same question: windows/security,
+	// linux/auditd, zeek/dns.
+	//
+	// They exist because a rule can state what it applies to without saying so
+	// in its detection. The rules in this repository put the event identifier
+	// in a selection of their own, so they need none of this; most of the
+	// public corpus does not, and a Zeek rule written for dns.log has nothing
+	// in it to stop it matching an http record that happens to have a field of
+	// the same name. Running a rule against evidence it was not written for is
+	// not a near miss, it is a false positive with a rule's name on it.
+	Product  string
+	Service  string
+	Category string
 }
 
 // Fields holds the event exactly as the source recorded it, with the source's

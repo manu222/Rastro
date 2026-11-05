@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Velocidex/ordereddict"
@@ -204,6 +205,12 @@ func (r *Reader) build(dict *ordereddict.Dict, path string, record int64) (*even
 			Record:    record,
 			Producer:  producerOf(flat),
 			TimeField: flat.TimeSource,
+			Product:   "windows",
+			// The service is the channel as Sigma names it: a rule written
+			// for the Security log says service: security, and a rule for
+			// Sysmon says service: sysmon. The channel is where that comes
+			// from, lower-cased and with the path dropped.
+			Service: serviceOf(flat),
 		},
 		Raw: event.Fields(flat.Fields),
 	}
@@ -246,6 +253,25 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// serviceOf names the channel the way a Sigma rule names it.
+//
+// Microsoft-Windows-Sysmon/Operational is "sysmon" to a rule author, Security
+// is "security", and Microsoft-Windows-PowerShell/Operational is
+// "powershell". The transformation is the one the Sigma specification
+// describes: the vendor prefix and the channel suffix are not part of the
+// name people write.
+func serviceOf(flat winevent.Flat) string {
+	channel := flat.Channel
+	if channel == "" {
+		return ""
+	}
+	if i := strings.LastIndexByte(channel, '/'); i >= 0 {
+		channel = channel[:i]
+	}
+	channel = strings.TrimPrefix(channel, "Microsoft-Windows-")
+	return strings.ToLower(channel)
 }
 
 // asMap converts what the parser returns into plain Go maps.

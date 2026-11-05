@@ -149,11 +149,19 @@ func writeLimitsMarkdown(out *writer, r *Report) {
 		}
 		out.blank()
 	}
-	if l.SkippedFields > 0 || l.UndeclaredShapes > 0 {
+	// Only the counts that are not zero. A paragraph announcing that nothing
+	// went wrong reads like a machine filling in a form.
+	if l.SkippedFields > 0 {
 		any = true
-		out.line("**Fields:** %d value(s) could not be rendered and were left out of their records, "+
-			"and %d field name(s) arrived in a shape no provider table describes. "+
-			"The records were kept either way.", l.SkippedFields, l.UndeclaredShapes)
+		out.line("**Fields left out:** %d value(s) could not be rendered and were dropped from "+
+			"their records. The records were kept.", l.SkippedFields)
+		out.blank()
+	}
+	if l.UndeclaredShapes > 0 {
+		any = true
+		out.line("**Undeclared field shapes:** %d field name(s) arrived in a shape no provider "+
+			"table describes. Their values are in the report as the parser produced them, "+
+			"which may not be how the provider wrote them.", l.UndeclaredShapes)
 		out.blank()
 	}
 	if l.DeducedValues > 0 || l.IncompleteChains > 0 {

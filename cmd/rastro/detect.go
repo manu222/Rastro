@@ -291,11 +291,36 @@ func newRuleIndex(rules []*sigma.Compiled) *ruleIndex {
 // between calls, because this is the hot path and the caller never keeps it.
 func (idx *ruleIndex) forEvent(e *event.Event) []*sigma.Compiled {
 	idx.scratch = idx.scratch[:0]
-	idx.scratch = append(idx.scratch, idx.always...)
+	for _, c := range idx.always {
+		if applies(c, e) {
+			idx.scratch = append(idx.scratch, c)
+		}
+	}
 	if id := e.Raw["EventID"]; id != "" {
-		idx.scratch = append(idx.scratch, idx.byID[id]...)
+		for _, c := range idx.byID[id] {
+			if applies(c, e) {
+				idx.scratch = append(idx.scratch, c)
+			}
+		}
 	}
 	return idx.scratch
+}
+
+// applies keeps a rule away from evidence it was not written for.
+//
+// Most of the public corpus states what it applies to in its logsource and
+// nowhere else: a Zeek rule for dns.log has nothing in its detection to stop
+// it matching an http record with a field of the same name, and a Windows rule
+// has nothing to stop it matching an audit log. Running a rule against
+// evidence it was not written for is not a near miss, it is a false positive
+// with a rule's name on it.
+//
+// A rule that states nothing applies everywhere, which is what keeps the rules
+// of this repository working: they name their evidence inside the detection,
+// which is more explicit than a logsource and cannot be undone by a reader
+// labelling a record differently.
+func applies(c *sigma.Compiled, e *event.Event) bool {
+	return c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Category)
 }
 
 // requiredEventIDs reads the identifiers a rule cannot fire without.

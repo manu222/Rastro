@@ -151,7 +151,10 @@ level: low
 
 	idx := newRuleIndex([]*sigma.Compiled{pinned, other, always})
 
-	one := &event.Event{Raw: event.Fields{"EventID": "1", "Image": `C:\Windows\cmd.exe`}}
+	one := &event.Event{
+		Origin: event.Origin{Product: "windows", Service: "sysmon"},
+		Raw:    event.Fields{"EventID": "1", "Image": `C:\Windows\cmd.exe`},
+	}
 	got := titles(idx.forEvent(one))
 	if !has(got, "Only event 1") || !has(got, "Any event") {
 		t.Errorf("a record of event 1 did not meet the rules it should: %v", got)
@@ -162,7 +165,10 @@ level: low
 
 	// A record of an event no rule names still meets the unpinned ones, which
 	// is what keeps the index from hiding anything.
-	rpc := &event.Event{Raw: event.Fields{"EventID": "0"}}
+	rpc := &event.Event{
+		Origin: event.Origin{Product: "windows", Service: "rpc"},
+		Raw:    event.Fields{"EventID": "0"},
+	}
 	got = titles(idx.forEvent(rpc))
 	if len(got) != 1 || got[0] != "Any event" {
 		t.Errorf("want only the unpinned rule, got %v", got)
@@ -232,5 +238,92 @@ func repoRootForTest() (string, error) {
 			return "", os.ErrNotExist
 		}
 		dir = parent
+	}
+}
+
+// A rule states what evidence it was written for in its logsource, and most of
+// the public corpus states it nowhere else. Letting a Zeek rule see a Windows
+// record is not a near miss; it is a false positive carrying a rule's name.
+func TestARuleOnlySeesTheEvidenceItWasWrittenFor(t *testing.T) {
+	zeekRule := compile(t, `
+title: Suspicious DNS
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        query|contains: '.'
+    condition: selection
+level: medium
+`)
+	windowsRule := compile(t, `
+title: Any Windows event
+logsource:
+    product: windows
+detection:
+    selection:
+        query|contains: '.'
+    condition: selection
+level: medium
+`)
+	anywhere := compile(t, `
+title: States nothing
+detection:
+    selection:
+        query|contains: '.'
+    condition: selection
+level: low
+`)
+
+	idx := newRuleIndex([]*sigma.Compiled{zeekRule, windowsRule, anywhere})
+
+	dns := &event.Event{
+		Origin: event.Origin{Product: "zeek", Service: "dns"},
+		Raw:    event.Fields{"query": "evil.example.com"},
+	}
+	got := titles(idx.forEvent(dns))
+	if has(got, "Any Windows event") {
+		t.Errorf("a Windows rule was offered a Zeek record: %v", got)
+	}
+	if !has(got, "Suspicious DNS") || !has(got, "States nothing") {
+		t.Errorf("the rules that do apply were not offered: %v", got)
+	}
+
+	// The same field on Windows evidence: the Zeek rule must not see it.
+	win := &event.Event{
+		Origin: event.Origin{Product: "windows", Service: "security"},
+		Raw:    event.Fields{"query": "evil.example.com"},
+	}
+	got = titles(idx.forEvent(win))
+	if has(got, "Suspicious DNS") {
+		t.Errorf("a Zeek rule was offered a Windows record: %v", got)
+	}
+
+	// A rule naming only the product still applies to every service of it.
+	if !has(got, "Any Windows event") {
+		t.Errorf("a rule naming only the product did not apply: %v", got)
+	}
+}
+
+// The rules of this repository identify their evidence inside the detection,
+// so none of them may be filtered out by a logsource they do not rely on.
+func TestTheRulesOfThisRepositoryStillSeeTheirEvidence(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	res, err := sigma.LoadDir(filepath.Join(root, "rules", "windows"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := newRuleIndex(res.Rules)
+
+	// A Sysmon record as the reader labels one.
+	e := &event.Event{
+		Origin: event.Origin{Product: "windows", Service: "sysmon"},
+		Raw:    event.Fields{"EventID": "1", "Channel": "Microsoft-Windows-Sysmon/Operational"},
+	}
+	if len(idx.forEvent(e)) == 0 {
+		t.Error("no rule was offered a Sysmon process creation")
 	}
 }

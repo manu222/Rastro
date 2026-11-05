@@ -471,9 +471,19 @@ func buildEntities(findings []Finding) []Entity {
 
 	for _, f := range findings {
 		for _, inv := range f.Involved {
-			k := key{inv.Kind, inv.Name}
+			// A logon session is a join key and not a thing anybody isolates.
+			// It belongs on the finding, where it ties events together, and
+			// not in the list of what is affected, where "session 999" sits
+			// between two machines and means nothing to the reader.
+			if inv.Kind == "session" {
+				continue
+			}
+			k := key{inv.Kind, identity(inv.Kind, inv.Name)}
 			ent := index[k]
 			if ent == nil {
+				// The first spelling seen is the one shown, because any of
+				// them is as good as the others and picking one keeps the
+				// report stable between runs.
 				ent = &Entity{Kind: inv.Kind, Name: inv.Name, Deduced: !inv.Known}
 				index[k] = ent
 				roles[k] = map[string]bool{}
@@ -518,6 +528,28 @@ func buildEntities(findings []Finding) []Entity {
 }
 
 // buildTactics is the view that answers "what was the attacker doing".
+// identity decides when two names are the same thing.
+//
+// A machine name, an account and a hex digest are case-insensitive by their own
+// nature: DNS does not distinguish them, Windows does not distinguish accounts,
+// and a digest is a number written in hexadecimal. Without this the report
+// listed insecurebank\Administrator and insecurebank\administrator as two
+// accounts with four findings and one, which understates both and invites the
+// reader to think there were two.
+//
+// Paths are deliberately left alone. Windows does not distinguish their case
+// either, but Linux does, and there is no reader for Linux evidence yet to say
+// which rule applies to a given path. Merging them now would be a guess that
+// becomes wrong the day that reader lands; the consequence meanwhile is that
+// one file can appear twice, which is visible rather than silent.
+func identity(kind, name string) string {
+	switch kind {
+	case "host", "account", "group", "hash", "domain":
+		return strings.ToLower(name)
+	}
+	return name
+}
+
 func buildTactics(findings []Finding) []Tactic {
 	tactics := map[string]*Tactic{}
 	techniques := map[string]map[string]*Technique{}

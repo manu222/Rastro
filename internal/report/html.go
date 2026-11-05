@@ -106,11 +106,15 @@ what separates the two. They were:
 record(s) could not be parsed and {{ .Limits.DamagedChunks }} chunk(s) were
 damaged and skipped.{{ with .Limits.FirstFailure }} The first failure was: {{ . }}.{{ end }}</p>
 {{ end }}
-{{ if or .Limits.SkippedFields .Limits.UndeclaredShapes }}
-<p><strong>Fields:</strong> {{ .Limits.SkippedFields }} value(s) could not be
-rendered and were left out of their records, and {{ .Limits.UndeclaredShapes }}
-field name(s) arrived in a shape no provider table describes. The records were
-kept either way.</p>
+{{ if .Limits.SkippedFields }}
+<p><strong>Fields left out:</strong> {{ .Limits.SkippedFields }} value(s) could
+not be rendered and were dropped from their records. The records were kept.</p>
+{{ end }}
+{{ if .Limits.UndeclaredShapes }}
+<p><strong>Undeclared field shapes:</strong> {{ .Limits.UndeclaredShapes }} field
+name(s) arrived in a shape no provider table describes. Their values are in the
+report as the parser produced them, which may not be how the provider wrote
+them.</p>
 {{ end }}
 {{ if or .Limits.DeducedValues .Limits.IncompleteChains }}
 <p><strong>How much of this is inference:</strong> {{ .Limits.DeducedValues }}

@@ -346,3 +346,75 @@ func TestTheRenderingsAgreeOnTheFigures(t *testing.T) {
 		}
 	}
 }
+
+// The report listed insecurebank\Administrator and insecurebank\administrator
+// as two accounts with four findings and one. They are one account: Windows
+// does not distinguish the case of a name. Splitting them understates both and
+// invites the reader to believe there were two.
+func TestTwoSpellingsOfOneAccountAreOneEntity(t *testing.T) {
+	upper := sampleMatch()
+	upper.Account = event.Seen(`insecurebank\Administrator`)
+	lower := sampleMatch()
+	lower.Account = event.Seen(`insecurebank\administrator`)
+
+	r := Build(sampleInput(), []Match{upper, lower})
+	accounts := 0
+	for _, e := range r.Entities {
+		if e.Kind == "account" {
+			accounts++
+			if e.Findings != 2 {
+				t.Errorf("the two findings were not counted on one account: %+v", e)
+			}
+		}
+	}
+	if accounts != 1 {
+		t.Errorf("want one account entity, got %d: %+v", accounts, r.Entities)
+	}
+}
+
+// A path keeps its case, because Windows does not distinguish it and Linux
+// does, and there is no reader for Linux evidence yet to say which rule
+// applies. The consequence is visible rather than silent.
+func TestPathsAreNotMergedByCase(t *testing.T) {
+	a := sampleMatch()
+	a.Event.Entities = nil
+	a.Event.Add(event.KindFile, "image", event.Seen(`C:\Windows\System32\cmd.exe`))
+	b := sampleMatch()
+	b.Event = &event.Event{Time: a.Event.Time, Host: event.Seen("IEWIN7"), Raw: event.Fields{}}
+	b.Event.Add(event.KindFile, "image", event.Seen(`c:\windows\system32\cmd.exe`))
+
+	r := Build(sampleInput(), []Match{a, b})
+	files := 0
+	for _, e := range r.Entities {
+		if e.Kind == "file" {
+			files++
+		}
+	}
+	if files != 2 {
+		t.Errorf("want two file entities until a source says which comparison applies, got %d", files)
+	}
+}
+
+// A logon session ties events together and is not a thing anybody isolates, so
+// it belongs on the finding and not in the list of what is affected.
+func TestSessionsAreNotListedAsAffectedThings(t *testing.T) {
+	m := sampleMatch()
+	m.Event.Add(event.KindSession, "actor", event.Seen("999"))
+
+	r := Build(sampleInput(), []Match{m})
+	for _, e := range r.Entities {
+		if e.Kind == "session" {
+			t.Errorf("a session is in the list of affected things: %+v", e)
+		}
+	}
+	// And it is still on the finding, where it is useful.
+	var found bool
+	for _, inv := range r.Findings[0].Involved {
+		if inv.Kind == "session" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the session was dropped from the finding as well")
+	}
+}

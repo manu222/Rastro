@@ -43,12 +43,15 @@ func TestTheCorpusIsReadCompletely(t *testing.T) {
 		evidence := corpusPath(t, root, "datasets")
 		reader := evtx.New(evidence)
 
-		var files, records, unreadable, damaged, skipped int
+		var files, records, unreadable, damaged, skipped, unlabelled int
 		var firstFailure error
 		walk(t, evidence, ".evtx", func(path string) {
 			files++
-			stats, err := reader.ReadFile(path, func(*event.Event) error {
+			stats, err := reader.ReadFile(path, func(e *event.Event) error {
 				records++
+				if e.Origin.Product == "" {
+					unlabelled++
+				}
 				return nil
 			})
 			if err != nil {
@@ -80,6 +83,14 @@ func TestTheCorpusIsReadCompletely(t *testing.T) {
 		if skipped > 0 {
 			t.Errorf("%d field(s) could not be rendered and were dropped from their records", skipped)
 		}
+		// Every reader has to say what kind of evidence it produced, because a
+		// rule that states a logsource will not match a record that states
+		// none. A reader that forgets would silently stop most of the public
+		// corpus from ever firing, and the only sign of it would be a smaller
+		// number of findings than there should be.
+		if unlabelled > 0 {
+			t.Errorf("%d record(s) carry no product label, so no rule with a logsource can match them", unlabelled)
+		}
 
 		// The audit proper.
 		var undescribed []string
@@ -107,12 +118,15 @@ func TestTheCorpusIsReadCompletely(t *testing.T) {
 		evidence := corpusPath(t, root, "datasets-linux")
 		reader := auditd.New(evidence)
 
-		var files, records, unparsed int
+		var files, records, unparsed, unlabelled int
 		var firstFailure error
 		walk(t, evidence, ".log", func(path string) {
 			files++
-			stats, err := reader.ReadFile(path, func(*event.Event) error {
+			stats, err := reader.ReadFile(path, func(e *event.Event) error {
 				records++
+				if e.Origin.Product == "" || e.Origin.Service == "" {
+					unlabelled++
+				}
 				return nil
 			})
 			if err != nil {
@@ -134,6 +148,9 @@ func TestTheCorpusIsReadCompletely(t *testing.T) {
 			// means either the corpus changed or the parser stopped
 			// understanding a style it used to.
 			t.Errorf("%d line(s) were not read as audit records; first: %v", unparsed, firstFailure)
+		}
+		if unlabelled > 0 {
+			t.Errorf("%d record(s) carry no evidence label", unlabelled)
 		}
 	})
 }
