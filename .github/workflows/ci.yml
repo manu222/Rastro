@@ -74,6 +74,13 @@ jobs:
       - name: Fetch Linux samples
         run: bash scripts/fetch-linux-samples.sh
 
+      # The public rule corpus, so that the coverage figure in the README is a
+      # number CI checks rather than a claim. Shallow and unpinned on purpose:
+      # the point is that the loader keeps up with the rules people actually
+      # write, so it is measured against the current ones.
+      - name: Fetch the public Sigma corpus
+        run: git clone --quiet --depth 1 https://github.com/SigmaHQ/sigma.git tools/sigmahq
+
       - name: Vet
         run: go vet ./...
 
