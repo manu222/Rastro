@@ -25,12 +25,21 @@ import (
 
 const usage = `usage:
   rastro read   [-sample] [-codes] <evidence directory>
-  rastro detect [-rules <directory>] [-examples <n>] <evidence directory>`
+  rastro detect [-rules <directory>] [-examples <n>] <evidence directory>
+  rastro report [-rules <directory>] [-format md|html|json]
+                [-sections entities,timeline,tactics] [-out <file>] <evidence directory>`
 
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if os.Args[1] == "report" {
+		if err := runReport(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if os.Args[1] == "detect" {
 		if err := runDetect(os.Args[2:]); err != nil {

@@ -1,0 +1,9 @@
+# Normalise line endings. Checked out as the platform wants, stored as LF, so
+# that a file written on Windows and one written on Linux do not show up as a
+# whole-file change in a diff that touched three lines.
+* text=auto eol=lf
+
+# Evidence and binaries are not text.
+*.evtx binary
+*.exe binary
+*.png binary

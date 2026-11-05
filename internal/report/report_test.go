@@ -1,0 +1,348 @@
+package report
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/manu222/rastro/internal/correlate"
+	"github.com/manu222/rastro/internal/event"
+	"github.com/manu222/rastro/internal/sigma"
+)
+
+// The report has one job that matters more than looking right: it must never
+// say something the analysis does not know, and it must always say what the
+// analysis could not do. These tests are mostly about the second half, because
+// the first is easy to get right and the second is easy to quietly drop.
+
+func rule(title, id, level string, tags ...string) *sigma.Compiled {
+	return &sigma.Compiled{Rule: &sigma.Rule{Title: title, ID: id, Level: level, Tags: tags}}
+}
+
+func sampleInput() Input {
+	return Input{
+		Directory:         "datasets",
+		Files:             132,
+		Records:           31243,
+		Earliest:          time.Date(2019, 3, 25, 9, 0, 0, 0, time.UTC),
+		Latest:            time.Date(2020, 9, 27, 13, 0, 0, 0, time.UTC),
+		Hosts:             []string{"DC1.insecurebank.local", "IEWIN7"},
+		Elapsed:           time.Second,
+		Loaded:            []*sigma.Compiled{rule("A", "1", "high"), rule("B", "2", "medium")},
+		Silent:            []string{"Security Service Stopped"},
+		UnreadableRecords: 0,
+		UndeclaredShapes:  63,
+		Refused: []*sigma.Unsupported{
+			{Title: "Some Correlation Rule", Feature: sigma.FeatureCorrelation,
+				Reason: "describes a correlation between rules, which this engine does not evaluate"},
+		},
+		Notes: []string{"Sysmon writes its WMI events with the values quoted and the backslashes doubled."},
+	}
+}
+
+func sampleMatch() Match {
+	e := &event.Event{
+		Time:     time.Date(2019, 4, 18, 16, 58, 14, 0, time.UTC),
+		Class:    event.ClassProcess,
+		Action:   "process opened another process",
+		Activity: "10",
+		Origin:   event.Origin{Path: "Credential Access/mimikatz.evtx", Record: 22, Producer: "Microsoft-Windows-Sysmon/Operational"},
+		Host:     event.Seen("IEWIN7"),
+		Process:  event.Process{Image: event.Seen(`C:\powershell.exe`), GUID: event.Seen("GUID-PS")},
+		Target:   event.Process{Image: event.Seen(`C:\Windows\system32\lsass.exe`)},
+		Raw:      event.Fields{"EventID": "10", "GrantedAccess": "0x1010"},
+	}
+	e.Add(event.KindHost, "", e.Host)
+	e.Add(event.KindFile, "target image", event.Seen(`C:\Windows\system32\lsass.exe`))
+
+	return Match{
+		Rule:  rule("LSASS Memory Access With Read Rights", "abc", "high", "attack.credential_access", "attack.t1003.001"),
+		Event: e,
+		Hits: []sigma.Hit{
+			{Selection: "selection", Field: "GrantedAccess", Value: "0x1010", Pattern: "*0x1010*"},
+			{Selection: "selection", Field: "TargetImage", Value: `C:\Windows\system32\lsass.exe`, Pattern: `*\lsass.exe`},
+		},
+		Account: event.Deduced(`IEWIN7\IEUser`, "the account the acting process was created as, from record 13 of Credential Access/mimikatz.evtx"),
+		Lineage: []correlate.Step{
+			{Process: &correlate.Process{
+				Image: `C:\powershell.exe`, User: `IEWIN7\IEUser`, Integrity: "High",
+				Origin: event.Origin{Path: "Credential Access/mimikatz.evtx", Record: 13},
+			}},
+		},
+		Complete: false,
+	}
+}
+
+func TestTheSummaryCountsWhatWasLookedAtAndWhatWasFound(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+
+	if r.Evidence.Records != 31243 || r.Evidence.Files != 132 {
+		t.Errorf("evidence: %+v", r.Evidence)
+	}
+	if len(r.Findings) != 1 {
+		t.Fatalf("findings: %d", len(r.Findings))
+	}
+	if len(r.Severity) != 1 || r.Severity[0].Level != "high" {
+		t.Errorf("severity: %+v", r.Severity)
+	}
+}
+
+// A deduced value has to stay marked all the way to the page. This is the one
+// property that cannot be allowed to be lost in a renderer.
+func TestADeducedAccountIsMarkedInEveryRendering(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+	f := r.Findings[0]
+	if !f.AccountDeduced {
+		t.Fatal("the account was recorded as observed")
+	}
+	if f.AccountWhy == "" {
+		t.Fatal("the deduction carries no reasoning")
+	}
+
+	var md, html, js strings.Builder
+	if err := Markdown(&md, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if err := HTML(&html, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if err := JSON(&js, r); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, out := range map[string]string{"markdown": md.String(), "html": html.String()} {
+		if !strings.Contains(out, "deduced") {
+			t.Errorf("%s: a deduced account is presented as if it had been recorded", name)
+		}
+		if !strings.Contains(out, "record 13") {
+			t.Errorf("%s: the deduction does not say which record it came from", name)
+		}
+	}
+	var decoded Report
+	if err := json.Unmarshal([]byte(js.String()), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Findings[0].AccountDeduced {
+		t.Error("json: the deduced flag did not survive the round trip")
+	}
+}
+
+// Whichever views were asked for, the limits are always there. A reader who
+// asked for the timeline alone still has to be told what did not run.
+func TestTheLimitsAreInEveryRenderingAndEverySelectionOfViews(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+
+	for _, sections := range []Section{
+		SectionEntities, SectionTimeline, SectionTactics,
+		SectionEntities | SectionTimeline, AllSections,
+	} {
+		var md, html strings.Builder
+		if err := Markdown(&md, r, sections); err != nil {
+			t.Fatal(err)
+		}
+		if err := HTML(&html, r, sections); err != nil {
+			t.Fatal(err)
+		}
+		for name, out := range map[string]string{"markdown": md.String(), "html": html.String()} {
+			if !strings.Contains(out, "could not do") {
+				t.Errorf("%s with sections %d: the limits section is missing", name, sections)
+			}
+			if !strings.Contains(out, "Some Correlation Rule") {
+				t.Errorf("%s with sections %d: a refused rule is not reported", name, sections)
+			}
+			if !strings.Contains(out, "Security Service Stopped") {
+				t.Errorf("%s with sections %d: a rule that ran and found nothing is not reported", name, sections)
+			}
+		}
+	}
+}
+
+func TestSectionsSelectWhatIsRendered(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+
+	cases := []struct {
+		sections Section
+		wants    []string
+		missing  []string
+	}{
+		{SectionEntities, []string{"What is affected"}, []string{"How it unfolded", "What the attacker was doing"}},
+		{SectionTimeline, []string{"How it unfolded"}, []string{"What is affected", "What the attacker was doing"}},
+		{SectionTactics, []string{"What the attacker was doing"}, []string{"What is affected", "How it unfolded"}},
+		{SectionEntities | SectionTactics, []string{"What is affected", "What the attacker was doing"}, []string{"How it unfolded"}},
+		{AllSections, []string{"What is affected", "How it unfolded", "What the attacker was doing"}, nil},
+	}
+	for _, c := range cases {
+		var md strings.Builder
+		if err := Markdown(&md, r, c.sections); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range c.wants {
+			if !strings.Contains(md.String(), want) {
+				t.Errorf("sections %d: %q is missing", c.sections, want)
+			}
+		}
+		for _, gone := range c.missing {
+			if strings.Contains(md.String(), gone) {
+				t.Errorf("sections %d: %q should not be there", c.sections, gone)
+			}
+		}
+	}
+}
+
+// The entity view is what someone reads to decide what to isolate, so the worst
+// thing has to be at the top.
+func TestEntitiesAreOrderedBySeverity(t *testing.T) {
+	low := sampleMatch()
+	low.Rule = rule("Something Minor", "x", "low")
+	low.Event = &event.Event{
+		Time: time.Date(2019, 4, 1, 0, 0, 0, 0, time.UTC),
+		Host: event.Seen("QUIET-PC"),
+		Raw:  event.Fields{},
+	}
+	low.Event.Add(event.KindHost, "", low.Event.Host)
+	low.Account = event.Field{}
+	low.Lineage = nil
+
+	r := Build(sampleInput(), []Match{low, sampleMatch()})
+	if len(r.Entities) == 0 {
+		t.Fatal("no entities")
+	}
+	if r.Entities[0].Worst != "high" {
+		t.Errorf("the worst entity is not first: %+v", r.Entities)
+	}
+	// And every entity of the quieter finding is still there.
+	var found bool
+	for _, e := range r.Entities {
+		if e.Name == "QUIET-PC" {
+			found = true
+			if e.Worst != "low" {
+				t.Errorf("QUIET-PC: %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Error("a host with only a low finding was dropped from the view")
+	}
+}
+
+// A rule with no ATT&CK tag must not vanish from the tactic view, because a
+// reader counting findings across views would then be short by one and have no
+// way to know.
+func TestAnUntaggedRuleStillAppearsInTheTacticView(t *testing.T) {
+	m := sampleMatch()
+	m.Rule = rule("Untagged Rule", "y", "high")
+
+	r := Build(sampleInput(), []Match{m})
+	total := 0
+	for _, t := range r.Tactics {
+		total += t.Findings
+	}
+	if total != len(r.Findings) {
+		t.Errorf("the tactic view accounts for %d of %d findings", total, len(r.Findings))
+	}
+	if r.Tactics[0].Name != "untagged" {
+		t.Errorf("tactics: %+v", r.Tactics)
+	}
+}
+
+// ATT&CK tags are one namespace and which half a tag belongs to is decided by
+// its shape. Getting it wrong would file a tactic as a technique.
+func TestTagsAreSplitIntoTacticsAndTechniques(t *testing.T) {
+	tactics, techniques := attack([]string{
+		"attack.credential_access", "attack.t1003.001", "attack.privilege_escalation",
+		"attack.t1546.008", "cve.2021.1234", "detection.threat_hunting",
+	})
+	if len(tactics) != 2 || tactics[0] != "credential access" {
+		t.Errorf("tactics: %v", tactics)
+	}
+	if len(techniques) != 2 || techniques[0] != "T1003.001" {
+		t.Errorf("techniques: %v", techniques)
+	}
+}
+
+// An incomplete chain says so. The alternative is a reader believing the chain
+// reached the beginning.
+func TestAnIncompleteChainIsReportedAsIncomplete(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+	if r.Limits.IncompleteChains != 1 {
+		t.Errorf("incomplete chains: %d", r.Limits.IncompleteChains)
+	}
+	var md strings.Builder
+	if err := Markdown(&md, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(md.String(), "the chain stops here") {
+		t.Error("the report does not say the chain is short")
+	}
+}
+
+// The report describes attacker-chosen input, so a command line containing a
+// script tag must not come out of the HTML as a script tag.
+func TestTheHTMLEscapesWhatItDescribes(t *testing.T) {
+	m := sampleMatch()
+	m.Hits = []sigma.Hit{{
+		Selection: "selection", Field: "CommandLine",
+		Value:   `powershell -c "<script>alert(1)</script>"`,
+		Pattern: "*powershell*",
+	}}
+
+	r := Build(sampleInput(), []Match{m})
+	var html strings.Builder
+	if err := HTML(&html, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(html.String(), "<script>alert(1)</script>") {
+		t.Fatal("a report of a malicious command line executed it")
+	}
+	if !strings.Contains(html.String(), "alert(1)") {
+		t.Error("the value was not shown at all, which hides the evidence instead of escaping it")
+	}
+}
+
+func TestParseSections(t *testing.T) {
+	for in, want := range map[string]Section{
+		"":                          AllSections,
+		"all":                       AllSections,
+		"entities":                  SectionEntities,
+		"timeline":                  SectionTimeline,
+		"tactics":                   SectionTactics,
+		"entities,tactics":          SectionEntities | SectionTactics,
+		" timeline , entities ":     SectionTimeline | SectionEntities,
+		"entities,timeline,tactics": AllSections,
+	} {
+		got, err := ParseSections(in)
+		if err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q: want %d, got %d", in, want, got)
+		}
+	}
+	if _, err := ParseSections("nonsense"); err == nil {
+		t.Error("an unknown section was accepted")
+	}
+}
+
+// Both renderings describe the same analysis, so neither may know something the
+// other does not. The figures are what this checks, because a renderer that
+// starts calculating is how two reports of one analysis stop agreeing.
+func TestTheRenderingsAgreeOnTheFigures(t *testing.T) {
+	r := Build(sampleInput(), []Match{sampleMatch()})
+	var md, html strings.Builder
+	if err := Markdown(&md, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if err := HTML(&html, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	for _, figure := range []string{"31243", "132", "63"} {
+		if !strings.Contains(md.String(), figure) {
+			t.Errorf("markdown is missing the figure %s", figure)
+		}
+		if !strings.Contains(html.String(), figure) {
+			t.Errorf("html is missing the figure %s", figure)
+		}
+	}
+}

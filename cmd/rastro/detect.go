@@ -7,10 +7,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/manu222/rastro/internal/correlate"
 	"github.com/manu222/rastro/internal/event"
+	"github.com/manu222/rastro/internal/report"
 	"github.com/manu222/rastro/internal/sigma"
 	"github.com/manu222/rastro/internal/source/evtx"
 )
@@ -25,18 +24,21 @@ import (
 // the reason behind each finding is the part that makes a report worth reading:
 // "rule 1 fired" is not something anybody can act on.
 func detect(rulesDir, evidenceDir string, examples int) error {
-	loaded, err := sigma.LoadDir(rulesDir)
+	in, matches, diag, err := analyse(rulesDir, evidenceDir)
 	if err != nil {
 		return err
 	}
-	if len(loaded.Rules) == 0 {
-		return fmt.Errorf("no rules loaded from %s", rulesDir)
-	}
+	// The same structure the report is rendered from, so that the two commands
+	// cannot end up disagreeing about how many findings there are.
+	r := report.Build(in, matches)
 
-	fmt.Printf("Rules loaded    : %d\n", len(loaded.Rules))
-	if len(loaded.Refused) > 0 {
-		fmt.Printf("Rules refused   : %d  (these are blind spots, not warnings)\n", len(loaded.Refused))
-		byFeature := loaded.ByFeature()
+	fmt.Printf("Rules loaded    : %d\n", r.Evidence.RulesLoaded)
+	if n := len(r.Limits.RefusedRules); n > 0 {
+		fmt.Printf("Rules refused   : %d  (these are blind spots, not warnings)\n", n)
+		byFeature := map[string]int{}
+		for _, ref := range r.Limits.RefusedRules {
+			byFeature[ref.Feature]++
+		}
 		causes := make([]string, 0, len(byFeature))
 		for cause := range byFeature {
 			causes = append(causes, cause)
@@ -45,135 +47,34 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 		for _, cause := range causes {
 			fmt.Printf("  %-14s %d\n", cause, byFeature[cause])
 		}
-		for _, u := range loaded.Refused {
-			fmt.Printf("  - %v\n", u)
+		for _, ref := range r.Limits.RefusedRules {
+			fmt.Printf("  - %s: %s\n", ref.Rule, ref.Reason)
 		}
 	}
-
-	// Rules are grouped by the event identifiers they can possibly match, so
-	// that a record only meets the rules that have a chance. The grouping is
-	// derived from the rules themselves — a selection comparing EventID to a
-	// fixed value — and a rule that names no identifier is checked against
-	// everything, which is the safe side of the trade.
-	index := newRuleIndex(loaded.Rules)
-
-	root, err := evidenceRoot(evidenceDir)
-	if err != nil {
-		return err
-	}
-	// Two passes over the evidence, and the reason is not laziness.
-	//
-	// The process creation that explains an event can be anywhere: a later
-	// chunk of the same file, or another file entirely, because the directory
-	// is walked in whatever order it gives and each file covers its own stretch
-	// of time. A single pass would answer "who was behind this" with "nothing
-	// yet" for any event whose creation had not been reached, which is a wrong
-	// answer that depends on the order of a directory listing.
-	//
-	// Reading twice costs a second on this corpus at the measured 30µs per
-	// record. The index built in the first pass holds only what can be an
-	// ancestor — process creations and logon sessions, five hundred of 31,243
-	// records here — so it does not grow with the size of the case.
-	reader := evtx.New(root)
-	lineage := correlate.New()
-	if err := walkEvidence(root, reader, lineage.Observe); err != nil {
-		return err
-	}
-	processes, logons := lineage.Size()
 	fmt.Printf("Ancestors known : %d process creation(s), %d logon session(s)\n",
-		processes, logons)
+		diag.Processes, diag.Logons)
 
-	type finding struct {
-		rule        string
-		level       string
-		event       *event.Event
-		hits        []sigma.Hit
-		who         event.Field
-		unresolved  string
-		steps       []correlate.Step
-		complete    bool
-		escalations []correlate.Escalation
-		entry       *correlate.Logon
-		entryWho    event.Field
+	fmt.Printf("\nFiles read      : %d\n", r.Evidence.Files)
+	fmt.Printf("Records         : %d\n", r.Evidence.Records)
+	if r.Evidence.Records > 0 {
+		fmt.Printf("Evaluations     : %d  (%.1f rules per record on average)\n",
+			diag.Evaluations, float64(diag.Evaluations)/float64(r.Evidence.Records))
 	}
-
-	var (
-		records   int
-		files     int
-		evaluated int64
-		byRule    = map[string]int{}
-		levels    = map[string]int{}
-		kept      []finding
-		exampleOf = map[string]bool{}
-	)
-
-	start := time.Now()
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	fmt.Printf("Elapsed         : %s\n", r.Evidence.Elapsed)
+	if r.Limits.UnreadableRecords > 0 {
+		fmt.Printf("Unreadable      : %d record(s)\n", r.Limits.UnreadableRecords)
+		if r.Limits.FirstFailure != "" {
+			fmt.Printf("  first cause   : %s\n", r.Limits.FirstFailure)
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
-			return nil
-		}
-		files++
-		_, rerr := reader.ReadFile(path, func(e *event.Event) error {
-			records++
-			candidates := index.forEvent(e)
-			evaluated += int64(len(candidates))
-			for _, c := range candidates {
-				if !c.Matches(e.Raw) {
-					continue
-				}
-				byRule[c.Rule.Title]++
-				levels[c.Rule.Level]++
-				// One example per rule rather than the first few overall.
-				// The first few are whatever the directory listing happened to
-				// reach first, which here meant three findings from two rules
-				// and nothing from the seven others. A preview is supposed to
-				// show the shapes a report will have, not the order the files
-				// were in.
-				if _, shown := exampleOf[c.Rule.Title]; !shown && len(kept) < examples {
-					exampleOf[c.Rule.Title] = true
-					f := finding{
-						rule:  c.Rule.Title,
-						level: c.Rule.Level,
-						event: e,
-						hits:  c.Explain(e.Raw),
-						who:   lineage.Account(e),
-					}
-					f.unresolved = lineage.Unresolved(e)
-					f.steps, f.complete = lineage.Ancestry(e)
-					f.escalations = correlate.Escalations(f.steps)
-					f.entry, f.entryWho = lineage.Entry(f.steps)
-					kept = append(kept, f)
-				}
-			}
-			return nil
-		})
-		if rerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
-	elapsed := time.Since(start)
-	fmt.Printf("\nFiles read      : %d\n", files)
-	fmt.Printf("Records         : %d\n", records)
-	fmt.Printf("Evaluations     : %d  (%.1f rules per record on average)\n",
-		evaluated, float64(evaluated)/float64(max(records, 1)))
-	fmt.Printf("Elapsed         : %s\n", elapsed.Round(time.Millisecond))
-	if records > 0 {
-		fmt.Printf("Per record      : %s\n", (elapsed / time.Duration(records)).Round(time.Nanosecond))
+	fmt.Printf("\nFindings        : %d\n", len(r.Findings))
+	byRule := map[string]int{}
+	byLevel := map[string]string{}
+	for _, f := range r.Findings {
+		byRule[f.Rule]++
+		byLevel[f.Rule] = f.Level
 	}
-
-	total := 0
-	for _, n := range byRule {
-		total += n
-	}
-	fmt.Printf("\nFindings        : %d\n", total)
 	titles := make([]string, 0, len(byRule))
 	for title := range byRule {
 		titles = append(titles, title)
@@ -188,95 +89,100 @@ func detect(rulesDir, evidenceDir string, examples int) error {
 		fmt.Printf("  %-62s %5d\n", title, byRule[title])
 	}
 
-	// Rules that loaded and never fired. Over a corpus chosen to exercise them
-	// that is worth knowing: it is either a rule with nothing to find here, or
-	// a rule that cannot find anything anywhere.
-	var silent []string
-	for _, c := range loaded.Rules {
-		if byRule[c.Rule.Title] == 0 {
-			silent = append(silent, c.Rule.Title)
-		}
-	}
-	if len(silent) > 0 {
-		sort.Strings(silent)
-		fmt.Printf("\nLoaded but silent: %d\n", len(silent))
-		for _, title := range silent {
+	if len(r.Evidence.RulesSilent) > 0 {
+		fmt.Printf("\nLoaded but silent: %d\n", len(r.Evidence.RulesSilent))
+		for _, title := range r.Evidence.RulesSilent {
 			fmt.Printf("  %s\n", title)
 		}
 	}
 
-	if len(kept) > 0 {
-		fmt.Printf("\nOne example of each of %d rule(s):\n", len(kept))
-		for _, f := range kept {
-			fmt.Printf("\n  [%s] %s\n", strings.ToUpper(f.level), f.rule)
-			fmt.Printf("    %s  %s  record %d of %s\n",
-				f.event.Time.Format("2006-01-02 15:04:05"), f.event.Host.Value,
-				f.event.Origin.Record, f.event.Origin.Path)
-			if f.event.Action != "" {
-				fmt.Printf("    %s", f.event.Action)
-				switch {
-				case f.who.Known():
-					fmt.Printf(" by %s", f.who.Value)
-					if !f.who.Trusted() {
-						// A deduced account is marked and its reasoning
-						// printed. The alternative is a report whose reader
-						// cannot tell what was recorded from what was worked
-						// out, and that is not a forensic report.
-						fmt.Printf(" (deduced: %s)", f.who.Why)
-					}
-				case f.unresolved != "":
-					// A blank where a name should be says nothing about
-					// whether the tool failed or the evidence is short.
-					fmt.Printf(" by an account this evidence does not name (%s)", f.unresolved)
-				}
-				fmt.Println()
-			}
-			for _, h := range f.hits {
-				fmt.Printf("    because %s = %s  (rule asked for %s)\n",
-					h.Field, oneLine(h.Value, 80), h.Pattern)
-			}
-			printLineage(f.steps, f.complete, f.event.Origin)
-			for _, esc := range f.escalations {
-				fmt.Printf("    account changed from %s to %s at %s, record %d of %s\n",
-					esc.FromUser, esc.ToUser, esc.To.Image, esc.To.Origin.Record, esc.To.Origin.Path)
-			}
-			if f.entry != nil {
-				fmt.Printf("    came in through logon type %s", f.entry.Type)
-				if f.entry.Address != "" && f.entry.Address != "-" {
-					fmt.Printf(" from %s", f.entry.Address)
-				}
-				if f.entry.Workstation != "" && f.entry.Workstation != "-" {
-					fmt.Printf(" (%s)", f.entry.Workstation)
-				}
-				fmt.Printf(" as %s, record %d of %s\n",
-					f.entryWho.Value, f.entry.Origin.Record, f.entry.Origin.Path)
-			}
+	// One example per rule rather than the first few overall. The first few are
+	// whatever the directory listing happened to reach first, which over this
+	// corpus meant three findings from two rules and nothing from the seven
+	// others. A preview shows the shapes a report will have.
+	shown := map[string]bool{}
+	var preview []report.Finding
+	for _, f := range r.Findings {
+		if shown[f.Rule] || len(preview) >= examples {
+			continue
+		}
+		shown[f.Rule] = true
+		preview = append(preview, f)
+	}
+	if len(preview) > 0 {
+		fmt.Printf("\nOne example of each of %d rule(s):\n", len(preview))
+		for _, f := range preview {
+			printFinding(f)
 		}
 	}
 	return nil
 }
 
-// evidenceRoot resolves the directory an analysis was pointed at.
-//
-// filepath.WalkDir does not follow a symbolic link, including the one it is
-// handed as its root, and it reports no error when the root is one: it walks
-// nothing and returns nil. Evidence lives on mounted shares and in linked case
-// folders, so a tool that answers "0 records read" because the path was a link
-// is exactly the silent zero this project exists to avoid. The link is
-// resolved, and a root that is not a directory is said out loud.
-func evidenceRoot(dir string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", dir, err)
+// printFinding is the diagnostic view of one finding. The report renders the
+// same structure properly; this is for checking that the machinery produced
+// what it should.
+func printFinding(f report.Finding) {
+	fmt.Printf("\n  [%s] %s\n", strings.ToUpper(f.Level), f.Rule)
+	fmt.Printf("    %s  %s  record %d of %s\n",
+		f.Time.Format("2006-01-02 15:04:05"), f.Host, f.Origin.Number, f.Origin.File)
+	if f.Action != "" {
+		fmt.Printf("    %s", f.Action)
+		switch {
+		case f.Account != "" && f.AccountDeduced:
+			fmt.Printf(" by %s (deduced: %s)", f.Account, f.AccountWhy)
+		case f.Account != "":
+			fmt.Printf(" by %s", f.Account)
+		case f.AccountUnknown != "":
+			fmt.Printf(" by an account this evidence does not name (%s)", f.AccountUnknown)
+		}
+		fmt.Println()
 	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return "", err
+	for _, why := range f.Why {
+		fmt.Printf("    because %s = %s  (rule asked for %s)\n",
+			why.Field, truncate(why.Value, 80), why.Pattern)
 	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", dir)
+	if len(f.Lineage) > 0 {
+		fmt.Println("    how it got there:")
+		for i, s := range f.Lineage {
+			fmt.Printf("      %s%s", strings.Repeat("  ", i), s.Image)
+			if s.Account != "" {
+				fmt.Printf("   %s", s.Account)
+			}
+			if s.Integrity != "" {
+				fmt.Printf("   %s", s.Integrity)
+			}
+			fmt.Printf("   record %d of %s\n", s.Origin.Number, s.Origin.File)
+		}
+		if !f.LineageComplete {
+			fmt.Println("      (the chain stops here: the parent's creation is not in this evidence)")
+		}
 	}
-	return resolved, nil
+	for _, c := range f.AccountChanges {
+		fmt.Printf("    account changed from %s to %s at %s, record %d of %s\n",
+			c.From, c.To, c.Process, c.Origin.Number, c.Origin.File)
+	}
+	if f.Entry != nil {
+		fmt.Printf("    came in through logon type %s", f.Entry.Type)
+		if f.Entry.TypeName != "" {
+			fmt.Printf(" (%s)", f.Entry.TypeName)
+		}
+		if f.Entry.Address != "" {
+			fmt.Printf(" from %s", f.Entry.Address)
+		}
+		if f.Entry.Workstation != "" {
+			fmt.Printf(" on %s", f.Entry.Workstation)
+		}
+		fmt.Printf(" as %s, record %d of %s\n",
+			f.Entry.Account, f.Entry.Origin.Number, f.Entry.Origin.File)
+	}
+}
+
+// truncate shortens a value for a diagnostic line.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // walkEvidence reads every event log under root and hands each record to visit.
@@ -304,60 +210,27 @@ func walkEvidence(root string, reader *evtx.Reader, visit func(*event.Event)) er
 	})
 }
 
-// printLineage shows the chain of processes above an event, oldest first,
-// because that is the order the thing happened in.
-func printLineage(steps []correlate.Step, complete bool, self event.Origin) {
-	// On a process creation the first step of the lineage is the event itself,
-	// because the creation that explains the process is the record that fired
-	// the rule. Printing it as a step repeats a record the finding already
-	// shows two lines above.
-	shown := 0
-	for _, s := range steps {
-		if s.Process.Origin.Path != self.Path || s.Process.Origin.Record != self.Record {
-			shown++
-		}
-	}
-	if shown == 0 {
-		return
-	}
-	fmt.Println("    how it got there:")
-	depth := 0
-	for i := len(steps) - 1; i >= 0; i-- {
-		p := steps[i].Process
-		if p.Origin.Path == self.Path && p.Origin.Record == self.Record {
-			continue
-		}
-		indent := strings.Repeat("  ", depth)
-		depth++
-		fmt.Printf("      %s%s", indent, p.Image)
-		if p.User != "" {
-			fmt.Printf("   %s", p.User)
-		}
-		if p.Integrity != "" {
-			fmt.Printf("   %s", p.Integrity)
-		}
-		fmt.Printf("   record %d of %s\n", p.Origin.Record, p.Origin.Path)
-	}
-	if !complete {
-		// Said out loud, because a chain that stops because the evidence stops
-		// is not a chain that reached the beginning.
-		fmt.Println("      (the chain stops here: the parent's creation is not in this evidence)")
-	}
-}
-
-// oneLine renders a field value for a report line.
+// evidenceRoot resolves the directory an analysis was pointed at.
 //
-// Some values are not lines at all. The Properties field of a 4662 holds an
-// access mask and a list of directory object identifiers separated by
-// newlines and tabs, and printing it as it stands breaks the line it is
-// supposed to explain. The whitespace is collapsed rather than stripped, so
-// what is shown is still the value and not a rewriting of it.
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= n {
-		return s
+// filepath.WalkDir does not follow a symbolic link, including the one it is
+// handed as its root, and it reports no error when the root is one: it walks
+// nothing and returns nil. Evidence lives on mounted shares and in linked case
+// folders, so a tool that answers "0 records read" because the path was a link
+// is exactly the silent zero this project exists to avoid. The link is
+// resolved, and a root that is not a directory is said out loud.
+func evidenceRoot(dir string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", dir, err)
 	}
-	return s[:n] + "..."
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
+	}
+	return resolved, nil
 }
 
 // ruleIndex sorts rules by the event identifier they can match.
