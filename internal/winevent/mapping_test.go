@@ -293,7 +293,7 @@ func TestOnlyTheValueNotSetCodeCountsAsAbsent(t *testing.T) {
 	}
 }
 
-func TestMessageReferencesAreRecognisedAndMostlyUntranslated(t *testing.T) {
+func TestMessageReferencesAreTranslatedOnlyFromASource(t *testing.T) {
 	for _, v := range []string{"%%1842", "%%1833", "%%7688", "%%14675"} {
 		if !IsMessageRef(v) {
 			t.Errorf("%q was not recognised as a message reference", v)
@@ -308,14 +308,18 @@ func TestMessageReferencesAreRecognisedAndMostlyUntranslated(t *testing.T) {
 		t.Errorf("%%1842: %q", got)
 	}
 	// The honest half of the table: a code with no source stays as written.
-	// These four are still outstanding and must not acquire a label until a
-	// Windows installation has been made to say what they mean.
-	// %%1936 and %%1937 stay here because Windows itself printed them raw: the
-	// parameter strings were missing on the machine that rendered them, so
-	// there is nothing to copy and nothing to check against.
-	for _, code := range []string{"%%7688", "%%1936", "%%1937", "%%12544"} {
-		if got, ok := Explain("Properties", code); ok || got != code {
-			t.Errorf("an unresolved code was given a label: %s -> %q", code, got)
+	// %%7688 has never been resolved against a Windows installation.
+	if got, ok := Explain("Properties", "%%7688"); ok || got != "%%7688" {
+		t.Errorf("an unresolved code was given a label: %%7688 -> %q", got)
+	}
+	// And these were, out of msobjs.dll on Windows 10 19045. %%1936 is the
+	// one a guess from the message text would have got wrong.
+	for code, want := range map[string]string{
+		"%%1936": "default (type 1)", "%%1937": "full (type 2)",
+		"%%12544": "logon", "%%8274": "object access",
+	} {
+		if got, ok := Explain("TokenElevationType", code); !ok || got != want {
+			t.Errorf("%s: %q, want %q", code, got, want)
 		}
 	}
 }

@@ -68,11 +68,10 @@ func LogonTypeName(v string) (string, bool) {
 // The translation of the label is mine; the meaning is the machine's.
 //
 // Codes NOT in here are left as written, and `rastro read -codes` lists them.
-// The ones outstanding are the two spellings of ImpersonationLevel, the two of
-// TokenElevationType, the pair on AuditPolicyChanges, the two on OperationType,
-// and fourteen audit category identifiers that appear once each. Nothing is
-// guessed to fill the gap: an untranslated code is a gap the reader can look
-// up, and a wrong label is one they cannot catch.
+// None of the pinned corpus is outstanding any more; evidence from elsewhere
+// will bring codes this table has never seen. Nothing is guessed to fill the
+// gap: an untranslated code is a gap the reader can look up, and a wrong label
+// is one they cannot catch.
 var messageRefs = map[string]string{
 	// The yes/no pair, confirmed on a 4826 whose boot configuration had kernel
 	// debugging on and four other options off: KernelDebug was %%1842 and came
@@ -144,16 +143,32 @@ var messageRefs = map[string]string{
 	"%%8279":  "DS access",
 	"%%13825": "computer account management",
 	"%%14081": "directory service changes",
+
+	// The eleven that the corpus left outstanding, read straight out of the
+	// message table that defines them: msobjs.dll on Windows 10 Pro 19045,
+	// through FormatMessage, in English (0x0409) and in the machine's own
+	// Spanish, which agree. No rendered record was needed, because this is the
+	// source the rendering itself reads from.
+	"%%1793":  "not set", // <value not set>; still absence, see Unavailable
+	"%%1936":  "default (type 1)",
+	"%%1937":  "full (type 2)",
+	"%%8273":  "logon/logoff",
+	"%%8274":  "object access",
+	"%%12544": "logon",
+	"%%12804": "other object access events",
+	"%%12811": "detailed file share",
+	"%%13824": "user account management",
+	"%%13829": "other account management events",
+	"%%14080": "directory service access",
 }
 
-// TokenElevationType is deliberately absent, and for a reason worth recording:
-// Windows itself did not resolve it. Both 4688 records rendered on a real
-// installation printed "Tipo de elevación de token: %%1936" and "%%1937"
-// verbatim, because the parameter strings for that field were not available on
-// that machine. The message's own explanatory text describes types 1, 2 and 3 —
-// full, elevated and limited — and %%1936 is almost certainly type 1, but
-// "almost certainly" derived from arithmetic on a message number is exactly the
-// kind of reasoning this table exists to keep out. It stays a code.
+// TokenElevationType was left out for a while, for a reason worth keeping: the
+// machine that rendered the corpus printed %%1936 and %%1937 raw, and guessing
+// "type 1" from arithmetic on a message number is what this table keeps out.
+// msobjs.dll settles it: TokenElevationTypeDefault (1) and
+// TokenElevationTypeFull (2). Note the order: the message text lists the types
+// as full, elevated and limited, so the guess would have made %%1936 "full",
+// and Windows calls type 1 default and type 2 full.
 
 // Explain translates a value a person is about to read, and reports whether
 // anything was translated. The field name decides: a number means one thing

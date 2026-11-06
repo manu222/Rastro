@@ -219,8 +219,8 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			"see it. Three records of this corpus are written that way.",
 		"Sysmon writes its WMI events with the values quoted and the backslashes doubled, " +
 			"so a rule matching a plain path against a Sysmon 19, 20 or 21 will not fire.",
-		"Ten of Windows' message-table codes are shown as written rather than translated, " +
-			"because they have not been resolved against a real installation yet.",
+		"Windows' message-table codes (%%NNNN) that this tool has no source for are shown as " +
+			"written rather than guessed; `rastro read -codes` lists them.",
 		"There is no reader for Linux audit logs yet, so rules written against auditd " +
 			"load, run and report nothing.",
 		"Zeek counts the payload bytes each side of a connection sent, and in three of its " +
