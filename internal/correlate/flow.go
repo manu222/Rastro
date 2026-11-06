@@ -247,10 +247,23 @@ func (ix *Index) keyOf(e *event.Event) (key string, fromNetwork bool, via string
 	if key, fromNetwork, ok = tupleOf(e); ok {
 		return key, fromNetwork, "", true, ""
 	}
-	if e.Raw["id.orig_h"] == "" {
+	// Zeek before 5.1 wrote files.log with no uid and no addresses, only
+	// conn_uids, the set of connections the file crossed. The APT29 evaluation
+	// of OTRF is written that way; without this a finding on one of its files
+	// came back with nothing and no reason, which reads as "nobody asked for
+	// it". A set with more than one connection is not resolved: choosing one
+	// would be a guess.
+	uid, list := e.Raw["uid"], e.Raw["conn_uids"]
+	if e.Raw["id.orig_h"] == "" && list == "" {
 		return "", false, "", false, "" // not a network record: nothing to say
 	}
-	uid := e.Raw["uid"]
+	if uid == "" && list != "" {
+		if uids := strings.Split(list, ","); len(uids) > 1 {
+			return "", true, "", false, fmt.Sprintf(
+				"the file crossed %d connections (conn_uids %s), and choosing one would be a guess", len(uids), list)
+		}
+		uid = strings.TrimSpace(list)
+	}
 	k, found := ix.connByUID[uid]
 	switch {
 	case uid == "":

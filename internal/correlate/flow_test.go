@@ -554,3 +554,30 @@ func TestTwoPERowsWithOneFileIdAreReportedRatherThanGuessed(t *testing.T) {
 		t.Errorf("got %+v", a)
 	}
 }
+
+// A files.log from Zeek before 5.1, as the APT29 evaluation of OTRF writes it:
+// no uid, no addresses, only conn_uids. The values are the PE of SCRANTON's
+// files.log, joined to a conn.log row carrying the same uid.
+func TestAnOldFilesLogReachesItsConnectionThroughConnUIDs(t *testing.T) {
+	ix := New()
+	flow := zeekFlow()
+	flow.Raw["uid"] = "C1OVTv1ML8aw5ffxn6"
+	ix.Observe(flow)
+	ix.Observe(hostConnection())
+
+	old := &event.Event{
+		Class:  event.ClassFile,
+		Action: "file seen on the wire",
+		Origin: event.Origin{Product: "zeek", Service: "files", Path: "files.log", Record: 69},
+		Raw: event.Fields{"fuid": "FV8BmBzhLupORXNNc", "conn_uids": "C1OVTv1ML8aw5ffxn6",
+			"source": "HTTP", "mime_type": "application/x-dosexec", "analyzers": "PE"},
+	}
+	if c := ix.Connection(old); !c.Found() || !strings.Contains(c.Why, "C1OVTv1ML8aw5ffxn6") {
+		t.Fatalf("an old files.log record was not joined: %+v", c)
+	}
+
+	old.Raw["conn_uids"] = "C1OVTv1ML8aw5ffxn6,Cother"
+	if c := ix.Connection(old); c.Found() || !strings.Contains(c.Unresolved, "2 connections") {
+		t.Errorf("a file that crossed two connections was attributed: %+v", c)
+	}
+}

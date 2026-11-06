@@ -308,3 +308,27 @@ level: medium
 		t.Errorf("conn.log was given a category: %+v", conn)
 	}
 }
+
+// A Zeek log that went through a pipeline which does not accept dots in field
+// names. The line is the first of NASHUA's conn.log in OTRF's APT29 evaluation,
+// unchanged. The five-tuple has to be readable under the names the rules and
+// the join use, and the names it arrived with have to stay.
+func TestUnderscoredFieldNamesGetTheirDotsBack(t *testing.T) {
+	line := `{"@stream":"conn","@system":"bobs.bigwheel.local","@proc":"zeek","ts":1588205199.82437,"uid":"Cvf4XX17hSAgXDdGEd","id_orig_h":"10.0.1.6","id_orig_p":54243,"id_resp_h":"10.0.0.4","id_resp_p":53,"proto":"udp","service":"dns","duration":0.001528024673461914,"orig_bytes":39,"resp_bytes":55,"conn_state":"SF","missed_bytes":0,"history":"Dd","orig_pkts":1,"orig_ip_bytes":67,"resp_pkts":1,"resp_ip_bytes":83,"orig_l2_addr":"00:0d:3a:13:e3:69","resp_l2_addr":"12:34:56:78:9a:bc"}` + "\n"
+	events, stats := read(t, "conn.log", line)
+	if stats.Records != 1 {
+		t.Fatalf("stats: %+v", stats)
+	}
+	raw := events[0].Raw
+	for k, want := range map[string]string{
+		"id.orig_h": "10.0.1.6", "id.orig_p": "54243", "id.resp_h": "10.0.0.4", "id.resp_p": "53",
+		"id_orig_h": "10.0.1.6", "orig_bytes": "39",
+	} {
+		if raw[k] != want {
+			t.Errorf("%s = %q, want %q", k, raw[k], want)
+		}
+	}
+	if _, invented := raw["orig.bytes"]; invented {
+		t.Error("an underscore that is part of a name was turned into a dot")
+	}
+}

@@ -194,6 +194,7 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 		}
 
 		stats.Records++
+		dotted(fields)
 		if err := emit(buildEvent(fields, logPath, rel, line)); err != nil {
 			return stats, err
 		}
@@ -289,6 +290,35 @@ func (h *header) parseRow(text string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// dotted puts back the dots a pipeline took out of Zeek's field names.
+//
+// Zeek names the fields of its records with a dot: id.orig_h, certificate.subject.
+// Elasticsearch and several shippers do not accept dots in a field name and
+// write id_orig_h instead, and the APT29 evaluation logs of OTRF arrive that
+// way, every one of them. Without this the five-tuple was never read: the join
+// found 0 flows against 991 host connections, every Zeek rule that names
+// id.orig_h was blind, and the report said "not in the network evidence" of
+// connections that were in it.
+//
+// Only the record prefixes Zeek itself uses are restored — id, certificate,
+// san, basic_constraints — because an underscore elsewhere is part of the name
+// (orig_bytes, conn_state) and turning it into a dot would invent a field. The
+// underscored name stays; the dotted one is added beside it, and never over a
+// dotted field the record already carries.
+func dotted(fields map[string]string) {
+	for k, v := range fields {
+		for _, prefix := range []string{"id_", "certificate_", "san_", "basic_constraints_"} {
+			if rest, ok := strings.CutPrefix(k, prefix); ok && rest != "" {
+				name := strings.TrimSuffix(prefix, "_") + "." + rest
+				if _, taken := fields[name]; !taken {
+					fields[name] = v
+				}
+				break
+			}
+		}
+	}
 }
 
 // parseJSON reads the other form Zeek writes.

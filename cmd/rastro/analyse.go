@@ -314,6 +314,10 @@ var zeekLogs = map[string]bool{
 	// that is how the network half knows a 7 KB download was a 64-bit Windows
 	// binary, which is half of the only question worth asking about it.
 	"pe": true,
+	// Dynamic protocol detection: a connection on which an analyser gave up,
+	// which is how a protocol on an unexpected port shows. Twelve lines of it in
+	// the APT29 evaluation were being read as an audit log and counted unread.
+	"dpd": true,
 }
 
 // Zeek's own operational logs, which are about the sensor rather than about the
