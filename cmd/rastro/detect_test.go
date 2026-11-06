@@ -376,6 +376,8 @@ func readerRecords() []*event.Event {
 		&event.Event{Origin: event.Origin{Product: "zeek", Service: "dns"}, Raw: event.Fields{}},
 		&event.Event{Origin: event.Origin{Product: "zeek", Service: "conn"}, Raw: event.Fields{}},
 		&event.Event{Origin: event.Origin{Product: "zeek", Service: "http"}, Raw: event.Fields{}},
+		// files.log: what rules/network/zeek_files_pe_over_cleartext_http.yml is written against.
+		&event.Event{Origin: event.Origin{Product: "zeek", Service: "files"}, Raw: event.Fields{}},
 	)
 	return out
 }

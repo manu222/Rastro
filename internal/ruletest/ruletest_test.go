@@ -1,11 +1,15 @@
 // Package ruletest verifies that every detection rule in this repository still
 // matches exactly what its manifest says it should.
 //
-// There are two engines, because no single one reads every kind of evidence.
+// There are three engines, because no single one reads every kind of evidence.
 // Hayabusa reads Windows event logs and nothing else, so the Linux rules are
-// executed by Zircolite against a corpus of auditd records. Each manifest names
-// the engine it needs; everything after that — the per-sample counts, the
-// repository-wide total, the negative control — works the same either way.
+// executed by Zircolite against a corpus of auditd records. Neither reads Zeek,
+// so the network rules are executed by rastro itself, which makes those
+// manifests a check of the engine against the evidence and not against an
+// independent implementation — weaker, and every such manifest says so. Each
+// manifest names the engine it needs; everything after that — the per-sample
+// counts, the repository-wide total, the negative control — works the same
+// either way.
 //
 // Two things are asserted for every rule:
 //
@@ -37,6 +41,7 @@ import (
 const (
 	engineHayabusa  = "hayabusa"
 	engineZircolite = "zircolite"
+	engineRastro    = "rastro"
 )
 
 // Where each engine's rules and evidence live. Keeping the two corpora apart
@@ -49,6 +54,7 @@ var engineLayout = map[string]struct {
 }{
 	engineHayabusa:  {rules: filepath.Join("rules", "windows"), datasets: "datasets"},
 	engineZircolite: {rules: filepath.Join("rules", "linux"), datasets: "datasets-linux"},
+	engineRastro:    {rules: filepath.Join("rules", "network"), datasets: "datasets-compound"},
 }
 
 // manifest mirrors the YAML files under tests/.
@@ -182,7 +188,7 @@ func assertRulesAreSorted(root string) error {
 		names = append(names, filepath.Base(p))
 	}
 	return fmt.Errorf("rule(s) sitting directly in rules/: %s\n"+
-		"  every rule belongs in rules/windows/ or rules/linux/, because that is how\n"+
+		"  every rule belongs in rules/windows/, rules/linux/ or rules/network/, because that is how\n"+
 		"  the suite decides which engine runs it. A rule left here is never executed",
 		strings.Join(names, ", "))
 }
@@ -244,6 +250,8 @@ func runRules(t *testing.T, engine, root, rules, datasets string) ([]detection, 
 			return nil, fmt.Errorf("%w: %v", errToolMissing, err)
 		}
 		return runZircolite(t, cmd, rules, datasets)
+	case engineRastro:
+		return runRastro(t, root, rules, datasets)
 	}
 	return nil, fmt.Errorf("unknown engine %q", engine)
 }
@@ -635,5 +643,161 @@ func blankOut(n *yaml.Node) {
 	}
 	for _, child := range n.Content {
 		blankOut(child)
+	}
+}
+
+// runRastro executes the rules with this repository's own engine, through the
+// binary and its JSON report rather than by calling the packages. The JSON is
+// the contract a SIEM ingests, and the binary is the one path both commands
+// share; a test that rebuilt the pipeline out of the packages would be testing
+// a third path nobody runs.
+//
+// It is built from the tree under test every time. An old rastro.exe lying in
+// the repository has already been run against new code twice, and the output
+// looked like a bug in the code both times.
+//
+// One run over the whole corpus, as Hayabusa and Zircolite do. The join between
+// host and network then spans campaigns, which can turn an attribution into an
+// ambiguity where two campaigns share an address; it cannot change which
+// records a rule matches, and hits are all a manifest counts.
+func runRastro(t *testing.T, root, rules, datasets string) ([]detection, error) {
+	t.Helper()
+
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errToolMissing, err)
+	}
+	work := t.TempDir()
+	bin := filepath.Join(work, "rastro")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	build := exec.Command(gobin, "build", "-o", bin, "./cmd/rastro")
+	build.Dir = root
+	if combined, err := build.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("building rastro: %w: %s", err, truncate(string(combined), 800))
+	}
+
+	// datasets-compound is a directory of real files, but a corpus is often a
+	// link to where the evidence lives, and WalkDir does not follow one.
+	// rastro resolves its own argument; this only keeps the error readable.
+	out := filepath.Join(work, "report.json")
+	cmd := exec.Command(bin, "report", "-rules", rules, "-format", "json", "-out", out, datasets)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, truncate(string(combined), 800))
+	}
+
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		return nil, err
+	}
+	var rep struct {
+		Findings []struct {
+			RuleID string `json:"rule_id"`
+			Origin struct {
+				File string `json:"file"`
+			} `json:"origin"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		return nil, fmt.Errorf("parsing rastro's report: %w", err)
+	}
+	var found []detection
+	for _, f := range rep.Findings {
+		// A finding with no rule id would be counted against no manifest and
+		// vanish from the totals, which is the silence this suite exists for.
+		if f.RuleID == "" || f.Origin.File == "" {
+			return nil, fmt.Errorf("a finding in rastro's report has no rule id or no origin file: %+v", f)
+		}
+		found = append(found, detection{ruleID: f.RuleID, file: filepath.ToSlash(f.Origin.File)})
+	}
+	return found, nil
+}
+
+// Every rule of this repository is executed by some engine and checked by a
+// manifest.
+//
+// This is the hole the network rule fell into the day it was written. Nothing
+// required a rule to have a manifest: the suite iterates manifests, so a rule
+// without one was never run by anything, never counted, and never failed. And a
+// rule in a directory no engine is pointed at was the same thing one level up.
+// assertRulesAreSorted catches a rule left directly under rules/; this catches
+// the rest.
+func TestEveryRuleHasAManifest(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("cannot locate repository root: %v", err)
+	}
+	manifests, err := loadManifests(filepath.Join(root, "tests"))
+	if err != nil {
+		t.Fatalf("cannot read manifests: %v", err)
+	}
+	byPath := map[string][]manifest{}
+	for _, m := range manifests {
+		byPath[filepath.ToSlash(m.Rule)] = append(byPath[filepath.ToSlash(m.Rule)], m)
+	}
+	engineFor := map[string]string{}
+	for name, l := range engineLayout {
+		engineFor[filepath.ToSlash(l.rules)] = name
+	}
+
+	var rules []string
+	err = filepath.WalkDir(filepath.Join(root, "rules"), func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(p)) {
+		case ".yml", ".yaml":
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			rules = append(rules, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) == 0 {
+		t.Fatal("no rules under rules/")
+	}
+
+	for _, rel := range rules {
+		dir := rel[:strings.LastIndex(rel, "/")]
+		engine, executed := engineFor[dir]
+		if !executed {
+			t.Errorf("%s: no engine runs rules in %s/, so this rule is never executed", rel, dir)
+			continue
+		}
+
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var head struct {
+			ID string `yaml:"id"`
+		}
+		if err := yaml.Unmarshal(raw, &head); err != nil || head.ID == "" {
+			t.Errorf("%s: no readable id; a manifest is matched to its rule by id", rel)
+			continue
+		}
+
+		ms := byPath[rel]
+		switch {
+		case len(ms) == 0:
+			t.Errorf("%s: no manifest under tests/ names it, so nothing checks what it matches", rel)
+		case len(ms) > 1:
+			t.Errorf("%s: %d manifests name it; the totals would be asserted twice and could disagree", rel, len(ms))
+		case ms[0].RuleID != head.ID:
+			t.Errorf("%s: its manifest expects id %s and the rule has %s; every hit would be counted against nothing",
+				rel, ms[0].RuleID, head.ID)
+		case ms[0].engine() != engine:
+			t.Errorf("%s: its manifest asks for %s, and rules in %s/ are run by %s",
+				rel, ms[0].engine(), dir, engine)
+		}
 	}
 }

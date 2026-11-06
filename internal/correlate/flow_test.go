@@ -435,3 +435,60 @@ func TestAnAmbiguousTupleAttachesNoFlowToAProcess(t *testing.T) {
 		t.Error("one of two flows sharing a tuple was attached anyway")
 	}
 }
+
+// Row 11 of LSASS_campaign_01/files.log, unchanged: the PE carried by the
+// conn.log row in zeekFlow(). Endpoints and uid, no protocol.
+func zeekFile() *event.Event {
+	return &event.Event{
+		Class:  event.ClassFile,
+		Action: "file seen on the wire",
+		Origin: event.Origin{Product: "zeek", Service: "files", Path: "files.log", Record: 11},
+		Raw: event.Fields{
+			"ts": "1692161648.333854", "fuid": "FmHWcO2PF9wbqM6cil", "uid": "CwSLisOv4lXMZlXd3",
+			"id.orig_h": "192.168.1.41", "id.orig_p": "51126",
+			"id.resp_h": "10.0.5.13", "id.resp_p": "80",
+			"source": "HTTP", "depth": "0", "analyzers": "PE",
+			"mime_type": "application/x-dosexec", "duration": "0.001217",
+			"local_orig": "T", "is_orig": "F", "seen_bytes": "7168", "total_bytes": "7168",
+			"missing_bytes": "0", "overflow_bytes": "0", "timedout": "F",
+		},
+	}
+}
+
+func TestAFileOnTheWireReachesItsProcessThroughTheZeekUID(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekFlow())
+	ix.Observe(hostConnection())
+
+	c := ix.Connection(zeekFile())
+	if !c.Found() {
+		t.Fatalf("the file was not attributed: %q", c.Unresolved)
+	}
+	if !strings.HasSuffix(c.Process.Image.Value, `\msedge.exe`) || c.Process.Image.Trusted() {
+		t.Errorf("process: %+v", c.Process.Image)
+	}
+	if !strings.Contains(c.Why, "CwSLisOv4lXMZlXd3") {
+		t.Errorf("the reason does not name the uid it joined through: %q", c.Why)
+	}
+}
+
+func TestAFileWhoseConnectionIsMissingSaysSo(t *testing.T) {
+	ix := New()
+	ix.Observe(hostConnection()) // no conn.log row
+	if c := ix.Connection(zeekFile()); c.Found() || c.Unresolved == "" {
+		t.Fatalf("got %+v; a blank reads as \"nobody asked for it\"", c)
+	}
+}
+
+func TestAUIDNamingTwoConnectionsIsReportedRatherThanGuessed(t *testing.T) {
+	ix := New()
+	ix.Observe(hostConnection())
+	ix.Observe(zeekFlow())
+	other := zeekFlow()
+	other.Raw["id.orig_p"] = "51127"
+	ix.Observe(other)
+
+	if c := ix.Connection(zeekFile()); c.Found() || !strings.Contains(c.Unresolved, "more than one") {
+		t.Fatalf("got %+v", c)
+	}
+}

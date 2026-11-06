@@ -74,6 +74,13 @@ jobs:
       - name: Fetch Linux samples
         run: bash scripts/fetch-linux-samples.sh
 
+      # Host and network evidence of the same machine, which is what the
+      # network rules are checked against: Zeek logs and the Windows events of
+      # the host they were captured from. About 20 MB, at the commit pinned in
+      # tests/compound-samples.txt.
+      - name: Fetch compound samples
+        run: bash scripts/fetch-compound.sh
+
       # The public rule corpus, so that the coverage figure in the README is a
       # number CI checks rather than a claim. Shallow and unpinned on purpose:
       # the point is that the loader keeps up with the rules people actually

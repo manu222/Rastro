@@ -105,6 +105,13 @@ func (ix *Index) observeFlow(e *event.Event, key string) {
 		ix.DroppedFlows++
 		return
 	}
+	if uid := e.Raw["uid"]; uid != "" {
+		if prev, dup := ix.connByUID[uid]; dup && prev != key {
+			ix.connByUID[uid] = "" // ambiguous: keyOf says so
+		} else {
+			ix.connByUID[uid] = key
+		}
+	}
 	ix.flows[key] = append(ix.flows[key], &Flow{
 		UID:      e.Raw["uid"],
 		Service:  e.Raw["service"],
@@ -174,11 +181,14 @@ func remoteEnd(e *event.Event) string {
 
 // Connection answers what the other source saw of the same connection.
 func (ix *Index) Connection(e *event.Event) Connection {
-	key, fromNetwork, ok := tupleOf(e)
+	key, fromNetwork, via, ok, unresolved := ix.keyOf(e)
 	if !ok {
-		return Connection{}
+		return Connection{Unresolved: unresolved}
 	}
 	where := describe(key)
+	if via != "" {
+		where += " (" + via + ")"
+	}
 
 	if fromNetwork {
 		switch candidates := ix.hostConns[key]; len(candidates) {
@@ -222,6 +232,35 @@ func (ix *Index) Connection(e *event.Event) Connection {
 				"would be the time, which these two sources do not agree about",
 			len(candidates), where)}
 	}
+}
+
+// keyOf is tupleOf with one more way in. A Zeek record with endpoints and no
+// protocol is placed through its uid, which Zeek writes identically in
+// conn.log, so that hop is read and not deduced. Measured: the six
+// application/x-dosexec rows of files.log in the compound corpus have no proto;
+// all six reach a tcp conn row by uid and from there exactly one Sysmon 3.
+//
+// Before this, such a record came back as an empty Connection with no reason,
+// and a finding on it said nothing about who asked for the file — a blank that
+// reads as "nobody did".
+func (ix *Index) keyOf(e *event.Event) (key string, fromNetwork bool, via string, ok bool, unresolved string) {
+	if key, fromNetwork, ok = tupleOf(e); ok {
+		return key, fromNetwork, "", true, ""
+	}
+	if e.Raw["id.orig_h"] == "" {
+		return "", false, "", false, "" // not a network record: nothing to say
+	}
+	uid := e.Raw["uid"]
+	k, found := ix.connByUID[uid]
+	switch {
+	case uid == "":
+		return "", true, "", false, "the network record names no protocol and no Zeek uid to find its connection by"
+	case !found:
+		return "", true, "", false, "the network record names no protocol, and conn.log holds no connection with Zeek uid " + uid
+	case k == "":
+		return "", true, "", false, "Zeek uid " + uid + " names more than one connection in conn.log"
+	}
+	return k, true, "through the conn.log row with Zeek uid " + uid, true, ""
 }
 
 // tupleOf reads the five-tuple off a record and says which side of the join the

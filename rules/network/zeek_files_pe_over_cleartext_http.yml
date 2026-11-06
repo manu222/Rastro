@@ -1,0 +1,40 @@
+title: Windows Executable Transferred Over Cleartext HTTP
+id: cb35f4a7-21bb-4c73-a5ce-7b582caf53ad
+status: experimental
+description: |
+    Detects a Windows executable crossing the wire inside an unencrypted HTTP
+    transfer, as Zeek's file analysis records it.
+
+    Keyed on mime_type, which Zeek derives from the content (libmagic on the
+    MZ header) and not from the Content-Type the server claimed, so renaming
+    the file or lying in the header does not help. source pins the transfer to
+    HTTP: over TLS the payload is never seen and this record does not exist.
+
+    No port is pinned. On the compound corpus one campaign of six is served
+    from 8080. Direction is not pinned either: the six transfers measured are
+    all downloads (is_orig F), so restricting it would change nothing that can
+    be measured, and a PE uploaded in clear is no less worth seeing.
+
+    filename and the hashes are not used. In all six records they are unset,
+    which the reader drops, so a rule needing them would load and never fire.
+references:
+    - https://attack.mitre.org/techniques/T1105/
+    - https://docs.zeek.org/en/master/scripts/base/frameworks/files/main.zeek.html
+author: Manuel Araujo
+date: 2026-11-06
+tags:
+    - attack.command-and-control
+    - attack.t1105
+logsource:
+    product: zeek
+    service: files
+detection:
+    selection:
+        source: HTTP
+        mime_type: application/x-dosexec
+    condition: selection
+falsepositives:
+    - WSUS served over HTTP (8530)
+    - Software updaters and internal deployment servers that still use plain HTTP
+level: medium
+ruletype: Sigma

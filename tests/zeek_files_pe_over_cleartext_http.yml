@@ -1,0 +1,48 @@
+# Test manifest for rules/network/zeek_files_pe_over_cleartext_http.yml
+#
+# No oracle. Hayabusa reads EVTX and Zircolite auditd, and neither is wired
+# here to read Zeek, so this manifest checks rastro against the evidence and
+# nothing else. That is weaker than the manifests for the Windows and Linux
+# rules, and it is written here so nobody mistakes it for the same guarantee.
+#
+# Six hits, one per campaign except 02. Campaign 02's files.log holds two
+# text/html responses and no executable; why no PE crossed that capture is not
+# established, and it is not this rule's job to guess.
+#
+# Campaign 04 is served from port 8080, which is why the rule pins no port.
+# Every hit is a download (is_orig F) of 7,168 bytes from 10.0.5.13 or
+# 10.0.5.14, and in all six the record leaves filename and the hashes unset.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/network/zeek_files_pe_over_cleartext_http.yml
+rule_id: cb35f4a7-21bb-4c73-a5ce-7b582caf53ad
+engine: rastro
+
+dataset:
+  repo: https://github.com/OTRF/Security-Datasets
+  commit: d9d40ef123d2c87d5d3df28c96bcab4f0faccc87
+  license: MIT
+  note: referenced, not redistributed
+
+expect:
+  - file: LSASS_campaign_01/files.log
+    hits: 1
+    note: uid CwSLisOv4lXMZlXd3, 192.168.1.41 from 10.0.5.13:80
+  - file: LSASS_campaign_03/files.log
+    hits: 1
+    note: uid CL67Ux3Z59CXVP9w9i, 192.168.1.42 from 10.0.5.13:80
+  - file: LSASS_campaign_04/files.log
+    hits: 1
+    note: uid Ch2Bdd2EGQ6SJwUXL5, 192.168.1.40 from 10.0.5.13:8080
+  - file: LSASS_campaign_05/files.log
+    hits: 1
+    note: uid Czcxok3Cxy9OJye9Xl, 192.168.56.30 from 10.0.5.14:80
+  - file: LSASS_campaign_06/files.log
+    hits: 1
+    note: uid CoF99D2QzW8Tg4DnXk, 192.168.56.30 from 10.0.5.14:80
+  - file: LSASS_campaign_07/files.log
+    hits: 1
+    note: uid C3bFQa1QonbaTy9dOk, 192.168.56.30 from 10.0.5.14:80
+
+total: 6
