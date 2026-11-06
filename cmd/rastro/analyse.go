@@ -128,6 +128,9 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 				// And where the acting process went, when the finding is about a
 				// program rather than about one of its connections.
 				m.Reach = lineage.Network(e)
+				// And what the network's PE analyser read of the file, when
+				// the finding is about a file that crossed the wire.
+				m.Exe = lineage.Executable(e)
 				matches = append(matches, m)
 			}
 			return nil

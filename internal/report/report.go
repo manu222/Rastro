@@ -163,6 +163,21 @@ type ShipperForm struct {
 	Count    int    `json:"records"`
 }
 
+// Executable is one pe.log row, joined to the file by Zeek's file id. The
+// values are Zeek's; the booleans are its T and F read as such.
+type Executable struct {
+	FileID     string  `json:"file_id,omitempty"`
+	Machine    string  `json:"machine,omitempty"`
+	OS         string  `json:"os,omitempty"`
+	Subsystem  string  `json:"subsystem,omitempty"`
+	Is64       bool    `json:"is_64bit"`
+	IsExe      bool    `json:"is_exe"`
+	CertTable  bool    `json:"has_cert_table"`
+	Why        string  `json:"why,omitempty"`
+	Unresolved string  `json:"unresolved,omitempty"`
+	Origin     *Record `json:"origin,omitempty"`
+}
+
 // Refusal is one rule that did not load.
 type Refusal struct {
 	Rule    string `json:"rule"`
@@ -210,6 +225,9 @@ type Finding struct {
 	Other *OtherSource `json:"other_source,omitempty"`
 	// Network is where the acting process went, on a finding about a process.
 	Network *Network `json:"network,omitempty"`
+	// Executable is what the network's PE analyser read of the file, on a
+	// finding about a file seen on the wire.
+	Executable *Executable `json:"executable,omitempty"`
 
 	// Involved are the entities this finding touches, which is how the report
 	// is grouped.
@@ -469,6 +487,9 @@ type Match struct {
 	// Reach is where the acting process went on the network, which is the
 	// question a finding about a process leaves open.
 	Reach correlate.Reach
+	// Exe is what Zeek's PE analyser said about the file, on a finding about a
+	// file seen on the wire.
+	Exe correlate.Analysis
 }
 
 // Build turns an analysis into a report.
@@ -592,6 +613,7 @@ func buildFinding(m Match) Finding {
 
 	f.Other = otherSource(m.Peer)
 	f.Network = reached(m.Reach)
+	f.Executable = executable(m.Exe)
 	f.Involved = involvement(e, m.Account)
 	return f
 }
@@ -636,6 +658,22 @@ func reached(r correlate.Reach) *Network {
 // dropping it: "the network evidence holds no flow for this" is something the
 // reader needs, and a blank where a flow should be says nothing about whether
 // the tool looked.
+func executable(a correlate.Analysis) *Executable {
+	switch {
+	case a.Exe != nil:
+		x := a.Exe
+		return &Executable{
+			FileID: x.FUID, Machine: clean(x.Machine), OS: clean(x.OS), Subsystem: clean(x.Subsystem),
+			Is64: x.Is64 == "T", IsExe: x.IsExe == "T", CertTable: x.CertTable == "T",
+			Why:    a.Why,
+			Origin: &Record{File: x.Origin.Path, Number: x.Origin.Record, Producer: x.Origin.Producer},
+		}
+	case a.Unresolved != "":
+		return &Executable{Unresolved: a.Unresolved}
+	}
+	return nil
+}
+
 func otherSource(c correlate.Connection) *OtherSource {
 	switch {
 	case c.Flow != nil:
@@ -982,4 +1020,30 @@ func clean(s string) string {
 		return ""
 	}
 	return s
+}
+
+// Description says what the analyser read, in the order an analyst asks:
+// what kind of file, for what machine, signed or not.
+func (x *Executable) Description() string {
+	kind := "PE file that is not an executable"
+	if x.IsExe {
+		kind = "executable"
+	}
+	bits := "32-bit"
+	if x.Is64 {
+		bits = "64-bit"
+	}
+	out := "a " + bits + " " + kind
+	if x.Machine != "" {
+		out += " for " + x.Machine
+	}
+	if x.Subsystem != "" {
+		out += ", subsystem " + x.Subsystem
+	}
+	if x.CertTable {
+		out += ", with a certificate table"
+	} else {
+		out += ", with no certificate table"
+	}
+	return out
 }

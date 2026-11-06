@@ -501,3 +501,56 @@ func TestARecordFromTheWireIsNotAskedWhereItsProcessWent(t *testing.T) {
 		t.Errorf("a files.log record was answered as if it named a process: %+v", r)
 	}
 }
+
+// The pe.log row of LSASS_campaign_01, unchanged. It names the file by Zeek's
+// file id and nothing else.
+func zeekPE() *event.Event {
+	return &event.Event{
+		Class:  event.ClassFile,
+		Action: "executable analysed on the wire",
+		Origin: event.Origin{Product: "zeek", Service: "pe", Path: "pe.log", Record: 9},
+		Raw: event.Fields{
+			"ts": "1692161648.333856", "id": "FmHWcO2PF9wbqM6cil", "machine": "AMD64",
+			"compile_ts": "1271282813.000000", "os": "Windows 95 or NT 4.0", "subsystem": "WINDOWS_GUI",
+			"is_exe": "T", "is_64bit": "T", "uses_aslr": "F", "uses_dep": "F", "uses_code_integrity": "F",
+			"uses_seh": "T", "has_import_table": "T", "has_export_table": "F", "has_cert_table": "F",
+			"has_debug_data": "F", "section_names": ".text,.rdata,.cmcq",
+		},
+	}
+}
+
+func TestAFileOnTheWireGainsWhatThePEAnalyserRead(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekPE())
+	a := ix.Executable(zeekFile())
+	if a.Exe == nil {
+		t.Fatalf("no PE record: %q", a.Unresolved)
+	}
+	if a.Exe.Machine != "AMD64" || a.Exe.Is64 != "T" || !strings.Contains(a.Why, "FmHWcO2PF9wbqM6cil") {
+		t.Errorf("got %+v, why %q", a.Exe, a.Why)
+	}
+}
+
+func TestAnAnalysedFileWithNoPERecordSaysSo(t *testing.T) {
+	if a := New().Executable(zeekFile()); a.Exe != nil || !strings.Contains(a.Unresolved, "holds no record") {
+		t.Fatalf("got %+v; a blank reads as \"not an executable\"", a)
+	}
+}
+
+func TestAFileTheAnalyserNeverSawIsNotAskedAbout(t *testing.T) {
+	f := zeekFile()
+	f.Raw["analyzers"] = ""
+	f.Raw["mime_type"] = "text/html"
+	if a := New().Executable(f); a.Exe != nil || a.Unresolved != "" {
+		t.Errorf("a file with no PE analysis was answered: %+v", a)
+	}
+}
+
+func TestTwoPERowsWithOneFileIdAreReportedRatherThanGuessed(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekPE())
+	ix.Observe(zeekPE())
+	if a := ix.Executable(zeekFile()); a.Exe != nil || !strings.Contains(a.Unresolved, "share") {
+		t.Errorf("got %+v", a)
+	}
+}

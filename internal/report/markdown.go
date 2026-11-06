@@ -310,6 +310,16 @@ func writeFindingMarkdown(out *writer, n int, f Finding) {
 		out.blank()
 	}
 
+	if x := f.Executable; x != nil {
+		if x.Unresolved != "" {
+			out.line("Nothing more is known about the file: %s.", x.Unresolved)
+		} else {
+			out.line("Zeek's PE analyser read the file as %s — record %d of `%s`. %s.",
+				x.Description(), x.Origin.Number, x.Origin.File, x.Why)
+		}
+		out.blank()
+	}
+
 	// Where the process went. This is the question a finding about a program
 	// leaves open, and the answer is in records the finding itself never
 	// touches.

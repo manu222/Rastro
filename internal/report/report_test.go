@@ -595,3 +595,52 @@ func TestACleanShipperIsAnEmptyListAndNotAMissingOne(t *testing.T) {
 		t.Errorf("shipper_forms is not an empty list:\n%s", js.String())
 	}
 }
+
+// What the PE analyser read reaches every view, and so does its absence.
+func TestThePEAnalysisIsInEveryRendering(t *testing.T) {
+	m := sampleMatch()
+	m.Exe = correlate.Analysis{
+		Exe: &correlate.Executable{FUID: "FmHWcO2PF9wbqM6cil", Machine: "AMD64", Subsystem: "WINDOWS_GUI",
+			Is64: "T", IsExe: "T", CertTable: "F", Origin: event.Origin{Path: "pe.log", Record: 9}},
+		Why: "the pe.log row with Zeek file id FmHWcO2PF9wbqM6cil",
+	}
+	missing := sampleMatch()
+	missing.Exe = correlate.Analysis{Unresolved: "pe.log holds no record of it"}
+	r := Build(sampleInput(), []Match{m, missing})
+
+	var md, html, js strings.Builder
+	if err := Markdown(&md, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if err := HTML(&html, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if err := JSON(&js, r); err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"markdown": md.String(), "html": html.String()} {
+		for _, want := range []string{"64-bit executable for AMD64", "no certificate table", "FmHWcO2PF9wbqM6cil", "pe.log holds no record"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: %q is missing", name, want)
+			}
+		}
+	}
+	var back Report
+	if err := json.Unmarshal([]byte(js.String()), &back); err != nil {
+		t.Fatal(err)
+	}
+	var exe, unresolved int
+	for _, f := range back.Findings {
+		if x := f.Executable; x != nil {
+			if x.Is64 && x.Machine == "AMD64" {
+				exe++
+			}
+			if x.Unresolved != "" {
+				unresolved++
+			}
+		}
+	}
+	if exe != 1 || unresolved != 1 {
+		t.Errorf("json: %d analysed, %d unresolved; want 1 and 1", exe, unresolved)
+	}
+}

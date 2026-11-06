@@ -479,6 +479,13 @@ func classify(fields map[string]string, logPath string, e *event.Event) {
 			}
 		}
 
+	case "pe":
+		// What the PE analyser made of a file it saw cross the wire. It names
+		// the file by Zeek's file id and nothing else: no flow, no address.
+		e.Class = event.ClassFile
+		e.Action = "executable analysed on the wire"
+		e.Activity = fields["machine"]
+
 	case "smb_files":
 		e.Class = event.ClassFile
 		e.Action = "file over SMB"

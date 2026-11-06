@@ -83,6 +83,9 @@ type Index struct {
 	// of the compound corpus; a duplicate is still marked, because an
 	// overwrite here would be silent.
 	connByUID map[string]string
+	// peByFUID is pe.log filed under Zeek's file id, which files.log writes
+	// beside the flow's uid. A list, so that a repeated id is seen.
+	peByFUID map[string][]*Executable
 
 	// Dropped counts what the limits refused to record, so that a lineage that
 	// breaks because of a limit can say that rather than look like missing
@@ -140,6 +143,7 @@ func New() *Index {
 		hostConns: map[string][]*Host{},
 		byProcess: map[string][]*Host{},
 		connByUID: map[string]string{},
+		peByFUID:  map[string][]*Executable{},
 	}
 }
 
@@ -157,6 +161,10 @@ func (ix *Index) Observe(e *event.Event) {
 	case event.ClassAuth:
 		if e.Action == "logon" {
 			ix.observeLogon(e)
+		}
+	case event.ClassFile:
+		if e.Action == "executable analysed on the wire" {
+			ix.observePE(e)
 		}
 	case event.ClassNetwork:
 		// Only the two records that are an account of a connection: Zeek's

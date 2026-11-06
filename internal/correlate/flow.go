@@ -368,3 +368,79 @@ func (ix *Index) Network(e *event.Event) Reach {
 	}
 	return r
 }
+
+// Executable is what Zeek's PE analyser wrote about a file it saw cross the
+// wire: one row of pe.log, as written.
+type Executable struct {
+	FUID      string
+	Machine   string
+	OS        string
+	Subsystem string
+	Is64      string
+	IsExe     string
+	CertTable string
+
+	Origin event.Origin
+}
+
+// Analysis is the PE record for a file, or why there is none.
+type Analysis struct {
+	Exe *Executable
+	// Why names the link. It is Zeek's own file id, written in both records,
+	// so nothing here is deduced; the sentence is there so the analyst can
+	// follow it.
+	Why        string
+	Unresolved string
+}
+
+func (ix *Index) observePE(e *event.Event) {
+	fuid := e.Raw["id"]
+	if fuid == "" {
+		return
+	}
+	ix.peByFUID[fuid] = append(ix.peByFUID[fuid], &Executable{
+		FUID:      fuid,
+		Machine:   e.Raw["machine"],
+		OS:        e.Raw["os"],
+		Subsystem: e.Raw["subsystem"],
+		Is64:      e.Raw["is_64bit"],
+		IsExe:     e.Raw["is_exe"],
+		CertTable: e.Raw["has_cert_table"],
+		Origin:    e.Origin,
+	})
+}
+
+// Executable answers what the PE analyser said about the file a files.log
+// record describes.
+//
+// It only asks when Zeek says it ran the analyser: files.log lists the
+// analysers that saw the file, and a text/html response has none to look up.
+// When the analyser ran and pe.log has nothing, that is said, because a blank
+// would read as "not an executable". On the compound corpus all six
+// application/x-dosexec files carry PE in analyzers and each has exactly one
+// pe.log row with its file id.
+func (ix *Index) Executable(e *event.Event) Analysis {
+	fuid := e.Raw["fuid"]
+	if fuid == "" || !hasAnalyser(e.Raw["analyzers"], "PE") {
+		return Analysis{}
+	}
+	switch c := ix.peByFUID[fuid]; len(c) {
+	case 0:
+		return Analysis{Unresolved: "Zeek ran its PE analyser on file " + fuid + " and pe.log holds no record of it"}
+	case 1:
+		return Analysis{Exe: c[0], Why: "the pe.log row with Zeek file id " + fuid}
+	default:
+		return Analysis{Unresolved: fmt.Sprintf("%d pe.log rows share Zeek file id %s", len(c), fuid)}
+	}
+}
+
+// hasAnalyser reads Zeek's set of analysers, which the reader joins with the
+// log's set separator, a comma by default.
+func hasAnalyser(set, name string) bool {
+	for _, a := range strings.Split(set, ",") {
+		if strings.EqualFold(strings.TrimSpace(a), name) {
+			return true
+		}
+	}
+	return false
+}

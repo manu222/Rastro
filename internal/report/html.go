@@ -226,6 +226,12 @@ as {{ . }}{{ end }}. <span class="meta">{{ .Why }}.</span></p>
 {{ else if .Unresolved }}<p class="meta">The other source has nothing to add: {{ .Unresolved }}.</p>
 {{ end }}
 {{ end }}
+{{ with $f.Executable }}
+{{ if .Unresolved }}<p class="meta">Nothing more is known about the file: {{ .Unresolved }}.</p>
+{{ else }}<p>Zeek's PE analyser read the file as {{ .Description }} &mdash; record {{ .Origin.Number }} of
+<code>{{ .Origin.File }}</code>. <span class="meta">{{ .Why }}.</span></p>
+{{ end }}
+{{ end }}
 {{ with $f.Network }}{{ if .Opened }}
 <p>{{ .Summary }}</p>
 <ul>

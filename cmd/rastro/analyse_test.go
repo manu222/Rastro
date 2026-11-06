@@ -44,3 +44,37 @@ func TestTheShippedReaderNumbersReachTheReport(t *testing.T) {
 		t.Errorf("shipper forms: %+v", in.ShipperForms)
 	}
 }
+
+// The application/x-dosexec row of LSASS_campaign_01's files.log and the pe.log
+// row for the same file, with their headers, unchanged.
+const (
+	filesLog = "#fields\tts\tfuid\tuid\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tsource\tdepth\tanalyzers\tmime_type\tfilename\tduration\tlocal_orig\tis_orig\tseen_bytes\ttotal_bytes\tmissing_bytes\toverflow_bytes\ttimedout\tparent_fuid\tmd5\tsha1\tsha256\textracted\textracted_cutoff\textracted_size\n" +
+		"1692161648.333854\tFmHWcO2PF9wbqM6cil\tCwSLisOv4lXMZlXd3\t192.168.1.41\t51126\t10.0.5.13\t80\tHTTP\t0\tPE\tapplication/x-dosexec\t-\t0.001217\tT\tF\t7168\t7168\t0\t0\tF\t-\t-\t-\t-\t-\t-\t-\n"
+	peLog = "#fields\tts\tid\tmachine\tcompile_ts\tos\tsubsystem\tis_exe\tis_64bit\tuses_aslr\tuses_dep\tuses_code_integrity\tuses_seh\thas_import_table\thas_export_table\thas_cert_table\thas_debug_data\tsection_names\n" +
+		"1692161648.333856\tFmHWcO2PF9wbqM6cil\tAMD64\t1271282813.000000\tWindows 95 or NT 4.0\tWINDOWS_GUI\tT\tT\tF\tF\tF\tT\tT\tF\tF\tF\t.text,.rdata,.cmcq\n"
+)
+
+// The PE analysis reaches the finding through analyse(), which no correlate or
+// renderer test can see.
+func TestAFileFindingCarriesThePEAnalysisThroughAnalyse(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	dir := t.TempDir()
+	for name, body := range map[string]string{"files.log": filesLog, "pe.log": peLog} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, matches, _, err := analyse(filepath.Join(root, "rules"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("%d findings; want the one PE rule hit", len(matches))
+	}
+	if x := matches[0].Exe.Exe; x == nil || x.Machine != "AMD64" {
+		t.Errorf("the finding does not carry the PE analysis: %+v", matches[0].Exe)
+	}
+}
