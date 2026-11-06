@@ -13,8 +13,8 @@ import "fmt"
 // The right source for these is the provider's own manifest, which states the
 // type of every field. For Security and Eventlog it has now been read
 // (manifest.go, from scripts/manifest-forms.ps1) and every entry below agrees
-// with it; a test fails the build the day one does not. Sysmon was not
-// installed on that machine, so its table still rests on the corpus.
+// with it; a test fails the build the day one does not. Sysmon's was read from
+// v15.22 afterwards, and its fourteen entries agree as well.
 //
 // The audit has already earned its place. Its first run found twelve fields
 // arriving as integers that no table described, every one of them written in
@@ -43,14 +43,12 @@ var Sysmon = &Table{
 		"SourceIsIpv6":      FormBool,
 		"DestinationIsIpv6": FormBool,
 
-		// NOT confirmed by the corpus. The parser used to survey it returns
-		// GrantedAccess as the text "0x1f1fff" every time, so the corpus has
-		// nothing to say about what happens when a parser hands back a number
-		// instead. The Go parser this project uses does exactly that — it is
-		// the finding the feasibility probe recorded — and a rule matching
-		// "0x1010" against the number 4112 fails silently. Declared from the
-		// provider's behaviour rather than from the evidence, and the first
-		// entry to re-check against the manifest.
+		// Not confirmed by the corpus, whose parser returns GrantedAccess as
+		// the text "0x1f1fff" every time; the Go parser this project uses
+		// hands back a number instead, and a rule matching "0x1010" against
+		// 4112 fails silently. It was declared from the provider's behaviour
+		// and flagged as the first entry to re-check against the manifest.
+		// Checked: Sysmon v15.22 declares it win:HexInt32.
 		"GrantedAccess": FormHex,
 
 		// And one that is hexadecimal while its neighbours are not. A Sysmon
@@ -60,6 +58,12 @@ var Sysmon = &Table{
 		// are hexadecimal" would have broken the first four entries of this
 		// table; this is why the tables are per field and not per idea.
 		"LogonId": FormHex,
+
+		// From the manifest alone: no event of the corpus carries them.
+		// IsExecutable is xs:boolean on the file block and detection events,
+		// Session is xs:unsignedInt.
+		"IsExecutable": FormBool,
+		"Session":      FormDecimal,
 	},
 }
 
@@ -169,6 +173,7 @@ var conflicts []string
 func init() {
 	merge(SecurityAuditing, securityManifest)
 	merge(Eventlog, eventlogManifest)
+	merge(Sysmon, sysmonManifest)
 }
 
 // merge adds what the manifest declares and the hand table does not. Where

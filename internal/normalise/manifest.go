@@ -15,9 +15,9 @@ package normalise
 // and stops every rule that mentions it. The default for a field is the form
 // most of its events declare; an event that declares otherwise is an
 // exception, and there are 35 of them across 33 events in the Security
-// provider, ProcessId alone in fourteen. Sysmon is not here: it was not
-// installed on the machine the templates were read from, so its table still
-// rests on the corpus.
+// provider, ProcessId alone in fourteen. Sysmon's templates were read from
+// v15.22 on the same machine: 276 fields in 30 events, of which only two are
+// hexadecimal, and both were already in its hand table.
 //
 // The hand tables win where both speak, and TestTheHandTablesAgreeWithTheManifests
 // fails the build if they ever disagree: a table that contradicts its own
@@ -117,5 +117,12 @@ var eventlogManifest = manifest{
 	},
 	Events: map[int]map[string]Form{
 		1106: {"Reason": FormHex},
+	},
+}
+
+var sysmonManifest = manifest{
+	Fields: map[string]Form{
+		"GrantedAccess": FormHex,
+		"LogonId":       FormHex,
 	},
 }

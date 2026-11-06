@@ -306,6 +306,10 @@ func TestTheHandTablesAgreeWithTheManifests(t *testing.T) {
 func TestTheManifestDeclarationsAreInForce(t *testing.T) {
 	n := Default()
 	const sec = "Microsoft-Windows-Security-Auditing"
+	// The field the project started from, now declared by its provider.
+	if got := n.Form("Microsoft-Windows-Sysmon", 10, "GrantedAccess"); got != FormHex {
+		t.Errorf("Sysmon GrantedAccess: %s", got)
+	}
 	for _, c := range []struct {
 		id    int
 		field string
