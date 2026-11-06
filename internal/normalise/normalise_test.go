@@ -290,3 +290,36 @@ func TestOneEventCanWriteAFieldDifferentlyFromItsProvider(t *testing.T) {
 		}
 	}
 }
+
+// The hand tables were seeded from the corpus; the manifests are what the
+// providers declare. Where both speak they have to agree, or one of them is
+// wrong and nothing would say which.
+func TestTheHandTablesAgreeWithTheManifests(t *testing.T) {
+	for _, c := range conflicts {
+		t.Error(c)
+	}
+}
+
+// What the manifest adds is in force: ProcessId is decimal on fourteen events
+// of the Security provider, not on the two the corpus showed, and TargetProcessId
+// is hexadecimal although no table of the corpus ever declared it.
+func TestTheManifestDeclarationsAreInForce(t *testing.T) {
+	n := Default()
+	const sec = "Microsoft-Windows-Security-Auditing"
+	for _, c := range []struct {
+		id    int
+		field string
+		want  Form
+	}{
+		{5446, "ProcessId", FormDecimal},
+		{5156, "ProcessID", FormDecimal},
+		{4688, "ProcessId", FormHex},
+		{4690, "TargetProcessId", FormHex},
+		{4674, "AccessMask", FormText},
+		{4656, "AccessMask", FormHex},
+	} {
+		if got := n.Form(sec, c.id, c.field); got != c.want {
+			t.Errorf("%d %s: %s, want %s", c.id, c.field, got, c.want)
+		}
+	}
+}

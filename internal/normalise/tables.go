@@ -1,5 +1,7 @@
 package normalise
 
+import "fmt"
+
 // The provider tables.
 //
 // Every entry here was taken from the pinned corpus by counting how each field
@@ -9,9 +11,10 @@ package normalise
 // declaration resting on somebody's memory.
 //
 // The right source for these is the provider's own manifest, which states the
-// type of every field (wevtutil gp <provider> /ge /gm). Until that is extracted
-// on a machine with the providers installed, this is the best available
-// approximation and the audit is what keeps it honest.
+// type of every field. For Security and Eventlog it has now been read
+// (manifest.go, from scripts/manifest-forms.ps1) and every entry below agrees
+// with it; a test fails the build the day one does not. Sysmon was not
+// installed on that machine, so its table still rests on the corpus.
 //
 // The audit has already earned its place. Its first run found twelve fields
 // arriving as integers that no table described, every one of them written in
@@ -150,6 +153,54 @@ var Eventlog = &Table{
 	Fields: map[string]Form{
 		"SubjectLogonId": FormHex,
 	},
+}
+
+// manifest is a provider's own declaration of its fields, generated in
+// manifest.go.
+type manifest struct {
+	Fields map[string]Form
+	Events map[int]map[string]Form
+}
+
+// conflicts lists every place a hand table contradicts its provider's
+// manifest. Empty is the only acceptable value; a test holds it there.
+var conflicts []string
+
+func init() {
+	merge(SecurityAuditing, securityManifest)
+	merge(Eventlog, eventlogManifest)
+}
+
+// merge adds what the manifest declares and the hand table does not. Where
+// both speak and disagree, the hand table is kept and the disagreement is
+// recorded, so that the build fails rather than one of them winning quietly.
+func merge(t *Table, m manifest) {
+	for field, f := range m.Fields {
+		if have, ok := t.Fields[field]; ok {
+			if have != f && !(have == FormMessageRef && f == FormText) {
+				conflicts = append(conflicts, fmt.Sprintf("%s %s: table %s, manifest %s", t.Producer, field, have, f))
+			}
+			continue
+		}
+		t.Fields[field] = f
+	}
+	if len(m.Events) > 0 && t.Events == nil {
+		t.Events = map[int]map[string]Form{}
+	}
+	for id, fields := range m.Events {
+		for field, f := range fields {
+			if have, ok := t.Events[id][field]; ok {
+				if have != f {
+					conflicts = append(conflicts, fmt.Sprintf("%s %d %s: table %s, manifest %s", t.Producer, id, field, have, f))
+				}
+				continue
+			}
+			if t.Events[id] == nil {
+				t.Events[id] = map[string]Form{}
+			}
+			t.Events[id][field] = f
+		}
+	}
 }
 
 // Default is the set of tables the EVTX reader starts from.
