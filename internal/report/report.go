@@ -547,7 +547,25 @@ func Build(in Input, matches []Match) *Report {
 	r.Entities = buildEntities(r.Findings)
 	r.Tactics = buildTactics(r.Findings)
 	r.Severity = buildSeverity(r.Findings)
+
+	// A SIEM reading the JSON has to be able to tell "looked and found none"
+	// from "did not look". encoding/json writes a nil slice as null, which is
+	// the second; a run with no findings and no refused rules is the first.
+	r.Findings = nonNil(r.Findings)
+	r.Entities = nonNil(r.Entities)
+	r.Tactics = nonNil(r.Tactics)
+	r.Severity = nonNil(r.Severity)
+	r.Limits.RefusedRules = nonNil(r.Limits.RefusedRules)
+	r.Evidence.Hosts = nonNil(r.Evidence.Hosts)
+	r.Evidence.RulesSilent = nonNil(r.Evidence.RulesSilent)
 	return r
+}
+
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 func buildFinding(m Match) Finding {

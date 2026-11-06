@@ -373,7 +373,7 @@ func readerRecords() []*event.Event {
 		labelled("Service Control Manager", "system", 7036, nil),
 		&event.Event{Origin: event.Origin{Product: "linux", Service: "auditd", Categories: []string{"process_creation"}}, Raw: event.Fields{}},
 		&event.Event{Origin: event.Origin{Product: "linux", Service: "auditd"}, Raw: event.Fields{}},
-		&event.Event{Origin: event.Origin{Product: "zeek", Service: "dns"}, Raw: event.Fields{}},
+		&event.Event{Origin: event.Origin{Product: "zeek", Service: "dns", Categories: []string{"dns"}}, Raw: event.Fields{}},
 		&event.Event{Origin: event.Origin{Product: "zeek", Service: "conn"}, Raw: event.Fields{}},
 		&event.Event{Origin: event.Origin{Product: "zeek", Service: "http"}, Raw: event.Fields{}},
 		// files.log: what rules/network/zeek_files_pe_over_cleartext_http.yml is written against.
@@ -430,7 +430,8 @@ func TestEveryRuleOfThisRepositoryCanReceiveARecord(t *testing.T) {
 // Most of what cannot be reached cannot be reached for good reasons: a rule for
 // macOS, for Azure sign-in logs or for a proxy has no reader here and should
 // not have one invented. So this does not demand zero. It demands that the
-// figure not grow: it was 677 of 3,162 when the category table was written, and
+// figure not grow: it was 677 of 3,162 when the category table was written and
+// 670 of 3,164 once dns.log answered to category: dns, and
 // an increase means a category stopped being derived and a set of rules went
 // quiet without saying so.
 func TestTheReachableShareOfThePublicCorpusDoesNotShrink(t *testing.T) {
@@ -467,7 +468,7 @@ func TestTheReachableShareOfThePublicCorpusDoesNotShrink(t *testing.T) {
 		len(unreachable), len(res.Rules))
 	// The figure when this was measured, on 3,162 rules. A corpus that has
 	// grown will have more of both, so the share is what is compared.
-	const measuredUnreachable, measuredTotal = 677, 3162
+	const measuredUnreachable, measuredTotal = 670, 3164
 	allowed := len(res.Rules) * measuredUnreachable / measuredTotal
 	if len(unreachable) > allowed+len(res.Rules)/100 {
 		t.Errorf("%d of %d rules are unreachable; at the share measured when the category "+

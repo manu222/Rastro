@@ -270,3 +270,41 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+// A rule that asks only for category: dns, the way twelve of SigmaHQ's do,
+// reaches a dns.log record and matches on query, the name Zeek writes it
+// under. And the category is not handed to every log: a conn record has none.
+func TestARuleWrittenForTheDnsCategoryMatchesADnsLog(t *testing.T) {
+	dir := t.TempDir()
+	rulePath := filepath.Join(dir, "rule.yml")
+	if err := os.WriteFile(rulePath, []byte(`
+title: A query by category alone
+logsource:
+    category: dns
+detection:
+    selection:
+        query|endswith: '.wrccdc.org'
+    condition: selection
+level: medium
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sigma.LoadFile(rulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, _ := read(t, "dns.log", dnsLog)
+	e := events[0]
+	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) {
+		t.Fatalf("a category: dns rule never reaches dns.log: %+v", e.Origin)
+	}
+	if !c.Matches(e.Raw) {
+		t.Fatalf("the rule did not match: %v", e.Raw)
+	}
+
+	body := "#separator \\x09\n#unset_field\t-\n#fields\tts\tx\n1521911720.0\ty\n"
+	conn, _ := read(t, "conn.log", body)
+	if len(conn) != 1 || len(conn[0].Origin.Categories) != 0 {
+		t.Errorf("conn.log was given a category: %+v", conn)
+	}
+}

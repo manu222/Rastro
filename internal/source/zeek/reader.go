@@ -397,7 +397,8 @@ func buildEvent(fields map[string]string, logPath, file string, line int64) *eve
 			Product:   "zeek",
 			// The log's own name is the service a rule asks for: a rule
 			// written for dns.log says service: dns.
-			Service: logPath,
+			Service:    logPath,
+			Categories: categoriesOf(logPath),
 		},
 	}
 	if t, ok := parseTime(fields["ts"]); ok {
@@ -413,6 +414,29 @@ func buildEvent(fields map[string]string, logPath, file string, line int64) *eve
 
 	classify(fields, logPath, e)
 	return e
+}
+
+// categoriesOf names the Sigma category a Zeek log answers to, for the rules
+// that ask by category and name no product.
+//
+// Only dns, and only because it was measured. Twelve rules of the public corpus
+// ask for category: dns and nothing else; until this, Applies refused every one
+// of them before evaluation, which is the silence of 4.5 again. Eleven of the
+// twelve match on query, which is the name dns.log writes it under. The twelfth
+// asks for answer and record_type, which Zeek calls answers and qtype_name; no
+// alias is added, because no campaign of the corpus holds a TXT record to check
+// a translation against, and an alias that has never seen a real record is a
+// guess with a field name on it.
+//
+// Sigma's other generic network categories — proxy, firewall, webserver — are
+// written for devices that are not a passive sensor, and putting a rule for a
+// proxy in front of Zeek's http.log would be the false positive the logsource
+// filter exists to stop.
+func categoriesOf(logPath string) []string {
+	if logPath == "dns" {
+		return []string{"dns"}
+	}
+	return nil
 }
 
 // nameOrAddress decides which of the two a value is by trying to read it as an

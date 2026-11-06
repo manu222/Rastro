@@ -644,3 +644,14 @@ func TestThePEAnalysisIsInEveryRendering(t *testing.T) {
 		t.Errorf("json: %d analysed, %d unresolved; want 1 and 1", exe, unresolved)
 	}
 }
+
+// No list in the JSON is null. An empty run is still an answer.
+func TestAnEmptyRunWritesEmptyListsAndNotNull(t *testing.T) {
+	var js strings.Builder
+	if err := JSON(&js, Build(Input{}, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(js.String(), "null") {
+		t.Errorf("a list came out as null:\n%s", js.String())
+	}
+}
