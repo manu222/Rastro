@@ -327,6 +327,9 @@ entity had findings on and, for each source, its first and last finding and on
 how many days. Host and network times are kept as separate spans, because the
 two keep separate clocks.
 
+`docs/pilot.md` describes how to try it in a SOC: closed incidents first,
+scored against what the analyst who closed them wrote down, then open ones.
+
 ## Performance
 
 Measured on a two-vCPU container over the compound corpus (Windows events
