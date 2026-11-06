@@ -219,11 +219,12 @@ func run(dir string) error {
 	)
 
 	start := time.Now()
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".evtx") {
+	list, _, err := evidenceFiles(root)
+	if err != nil {
+		return err
+	}
+	readOne := func(path string) error {
+		if !strings.EqualFold(filepath.Ext(path), ".evtx") {
 			return nil
 		}
 		files++
@@ -282,9 +283,11 @@ func run(dir string) error {
 			fmt.Fprintf(os.Stderr, "warning: %s: stopped early, %s\n", filepath.Base(path), stats.Stopped)
 		}
 		return nil
-	})
-	if err != nil {
-		return err
+	}
+	for _, path := range list {
+		if err := readOne(path); err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("Files read      : %d\n", files)

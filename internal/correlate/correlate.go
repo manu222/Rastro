@@ -69,6 +69,10 @@ type Index struct {
 	byPIDHost map[string][]*Process
 
 	logons map[string]*Logon
+	// LogonConflicts counts logon ids a host reused for a different account.
+	// The first session is kept; FirstLogonConflict says where the clash was.
+	LogonConflicts     int
+	FirstLogonConflict string
 
 	// The two halves of the connection join, each keyed by the five-tuple. See
 	// flow.go for why that is the key and the time is not.
@@ -244,7 +248,27 @@ func (ix *Index) observeLogon(e *event.Event) {
 			l.User = name
 		}
 	}
-	ix.logons[e.Host.Value+"\x00"+id] = l
+	key := e.Host.Value + "\x00" + id
+	if prev, ok := ix.logons[key]; ok {
+		// Windows reuses logon ids: 0x3e7 is SYSTEM on every boot, and any id
+		// can come back after a reboot. A repeat of the same session — same
+		// account, same type — is the same answer and changes nothing. A
+		// different session under the same key is a tie with no tiebreak but
+		// the time, and the time between sources is not trusted here; it is
+		// counted and the report says so. Measured over the two days of the
+		// APT29 evaluation: 598 logons, the only repeated key is 0x3e7, and
+		// every repeat of it is SYSTEM, type 5 or 0 — no conflict. Before this,
+		// a later logon silently replaced the earlier one.
+		if prev.User != l.User {
+			ix.LogonConflicts++
+			if ix.FirstLogonConflict == "" {
+				ix.FirstLogonConflict = fmt.Sprintf("%s on %s: %s (record %d of %s) and %s (record %d of %s)",
+					id, e.Host.Value, prev.User, prev.Origin.Record, prev.Origin.Path, l.User, l.Origin.Record, l.Origin.Path)
+			}
+		}
+		return
+	}
+	ix.logons[key] = l
 }
 
 // Creator returns the creation of a process, and how certain that answer is.

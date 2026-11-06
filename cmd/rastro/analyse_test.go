@@ -103,3 +103,47 @@ func TestAnExecveWithNoSyscallIsDeclaredInTheReport(t *testing.T) {
 	}
 	t.Errorf("no note about the EXECVE without its SYSCALL: %q", in.Notes)
 }
+
+// A case assembled as links to each day's collection, the way an incident that
+// spans days arrives. The linked day has to be read, a link that leads nowhere
+// has to be declared, and a link back to the case has to end. Before this, the
+// two days of APT29 linked into one folder read 0 records with exit code 0.
+func TestALinkedDayIsReadAndABrokenLinkIsDeclared(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	base := t.TempDir()
+	day := filepath.Join(base, "day1")
+	caseDir := filepath.Join(base, "case")
+	for _, d := range []string{day, caseDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(day, "host.json"), []byte(shippedTermination+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{"day1": day, "gone": filepath.Join(base, "nowhere"), "loop": caseDir} {
+		if err := os.Symlink(target, filepath.Join(caseDir, link)); err != nil {
+			t.Skipf("symbolic links are not available here: %v", err)
+		}
+	}
+
+	in, _, _, err := analyse(filepath.Join(root, "rules"), caseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Records != 1 {
+		t.Errorf("records read through the link: %d, want 1", in.Records)
+	}
+	declared := false
+	for _, n := range in.Notes {
+		if strings.HasPrefix(n, "1 link(s)") && strings.Contains(n, "gone") {
+			declared = true
+		}
+	}
+	if !declared {
+		t.Errorf("the broken link was not declared: %q", in.Notes)
+	}
+}

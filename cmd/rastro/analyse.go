@@ -75,6 +75,12 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		return in, nil, diag, err
 	}
 	diag.Processes, diag.Logons = lineage.Size()
+	if lineage.LogonConflicts > 0 {
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"%d logon id(s) were reused on the same host for a different account, which happens "+
+				"after a reboot. The first session is the one findings are attributed to, and it may be "+
+				"the wrong one: %s.", lineage.LogonConflicts, lineage.FirstLogonConflict))
+	}
 	diag.Flows, diag.HostConns = lineage.Flows()
 
 	index := newRuleIndex(loaded.Rules)
@@ -84,12 +90,13 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 
 	start := time.Now()
 	unjoined := 0
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	files, broken, err := evidenceFiles(root)
+	if err != nil {
+		return in, nil, diag, err
+	}
+	readOne := func(path string) error {
 		kind := sourceOf(path)
-		if d.IsDir() || kind == sourceNone {
+		if kind == sourceNone {
 			return nil
 		}
 		in.Files++
@@ -182,9 +189,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			in.FirstFailure = fmt.Sprintf("%s: %v", filepath.Base(path), failure)
 		}
 		return nil
-	})
-	if err != nil {
-		return in, nil, diag, err
+	}
+	for _, path := range files {
+		if err := readOne(path); err != nil {
+			return in, nil, diag, err
+		}
 	}
 	in.Elapsed = time.Since(start)
 	in.UndeclaredShapes = len(windows.Gaps())
@@ -234,6 +243,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			"order events within a source and do not date them across sources.",
 	}
 
+	if len(broken) > 0 {
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"%d link(s) in the evidence directory lead nowhere and were not read; the first is %s.",
+			len(broken), relTo(root, broken[0])))
+	}
 	if unjoined > 0 {
 		in.Notes = append(in.Notes, fmt.Sprintf(
 			"%d audit EXECVE record(s) have no SYSCALL of the same event in their file, so the "+
@@ -328,4 +342,11 @@ var zeekDiagnostics = map[string]bool{
 	"analyzer": true, "packet_filter": true, "loaded_scripts": true,
 	"reporter": true, "stats": true, "capture_loss": true, "cluster": true,
 	"broker": true, "telemetry": true, "known_services": true,
+}
+
+func relTo(root, path string) string {
+	if r, err := filepath.Rel(root, path); err == nil {
+		return filepath.ToSlash(r)
+	}
+	return path
 }

@@ -406,3 +406,31 @@ func TestCaseIsNotAnAccountChange(t *testing.T) {
 		t.Errorf("a change of case was reported as a change of account: %+v", esc)
 	}
 }
+
+// A host reuses logon ids, 0x3e7 on every boot and any id after a reboot. A
+// repeat of the same session changes nothing; a different account under the
+// same id is counted, and the first session is kept rather than replaced.
+func TestAReusedLogonIdIsCountedRatherThanReplaced(t *testing.T) {
+	logon := func(record int64, user, typ string) *event.Event {
+		return &event.Event{
+			Class: event.ClassAuth, Action: "logon",
+			Origin: event.Origin{Path: "Security.evtx", Record: record},
+			Host:   event.Seen("SCRANTON.dmevals.local"),
+			Raw: event.Fields{"EventID": "4624", "TargetLogonId": "0x3c4a1",
+				"TargetUserName": user, "TargetDomainName": "DMEVALS", "LogonType": typ},
+		}
+	}
+	ix := New()
+	ix.Observe(logon(1, "pbeesly", "2"))
+	ix.Observe(logon(2, "pbeesly", "2"))
+	if ix.LogonConflicts != 0 {
+		t.Fatalf("a repeat of the same session was counted as a conflict")
+	}
+	ix.Observe(logon(3, "mscott", "3"))
+	if ix.LogonConflicts != 1 || !strings.Contains(ix.FirstLogonConflict, "pbeesly") || !strings.Contains(ix.FirstLogonConflict, "mscott") {
+		t.Errorf("conflicts %d, first %q", ix.LogonConflicts, ix.FirstLogonConflict)
+	}
+	if l := ix.logons["SCRANTON.dmevals.local\x000x3c4a1"]; l == nil || l.Origin.Record != 1 {
+		t.Errorf("the first session was replaced: %+v", l)
+	}
+}

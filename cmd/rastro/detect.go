@@ -273,13 +273,14 @@ func truncate(s string, n int) string {
 // Used for the pass that builds the ancestry index, where nothing is evaluated
 // and nothing is counted.
 func walkEvidence(root string, windows *evtx.Reader, shipped *winjson.Reader, linux *auditd.Reader, network *zeek.Reader, visit func(*event.Event)) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	files, _, err := evidenceFiles(root)
+	if err != nil {
+		return err
+	}
+	for _, path := range files {
 		kind := sourceOf(path)
-		if d.IsDir() || kind == sourceNone {
-			return nil
+		if kind == sourceNone {
+			continue
 		}
 		emit := func(e *event.Event) error {
 			visit(e)
@@ -302,8 +303,57 @@ func walkEvidence(root string, windows *evtx.Reader, shipped *winjson.Reader, li
 			// on it will say they are incomplete.
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), rerr)
 		}
+	}
+	return nil
+}
+
+// evidenceFiles lists every file under root, following links to directories.
+//
+// evidenceRoot resolves a link given as the root; this is the same problem one
+// level down. A case put together as links to each day's collection — the way
+// an incident that spans a week arrives — walked nothing under filepath.WalkDir
+// and reported 0 records with exit code 0: APT29's two days, linked into one
+// folder, did exactly that. Links are followed, a directory already visited by
+// its real path is not entered twice so a loop ends, and a link that leads
+// nowhere is returned rather than skipped, so the report can say so.
+//
+// The order is the directory order, sorted, so two runs over the same evidence
+// read it in the same order.
+func evidenceFiles(root string) (files, broken []string, err error) {
+	seen := map[string]bool{}
+	var walk func(dir string) error
+	walk = func(dir string) error {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return err
+		}
+		if seen[real] {
+			return nil
+		}
+		seen[real] = true
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, d := range entries {
+			path := filepath.Join(dir, d.Name())
+			info, err := os.Stat(path) // follows a link
+			if err != nil {
+				broken = append(broken, path)
+				continue
+			}
+			if info.IsDir() {
+				if err := walk(path); err != nil {
+					return err
+				}
+				continue
+			}
+			files = append(files, path)
+		}
 		return nil
-	})
+	}
+	err = walk(root)
+	return files, broken, err
 }
 
 // evidenceRoot resolves the directory an analysis was pointed at.
