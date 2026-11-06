@@ -360,3 +360,90 @@ level: medium
 		t.Errorf("a CommandLine the record carried was overwritten: %q", got)
 	}
 }
+
+// One event out of Zircolite v4.7.1's tests/fixtures/audit_sample.log, a real
+// auditd 2.8.5 capture: the SYSCALL and the EXECVE of a script started with
+// /bin/sh. a0 is what was typed; the program that ran is exe.
+const (
+	augenrulesSyscall = `type=SYSCALL msg=audit(1644169369.368:91192): arch=c000003e syscall=59 success=yes exit=0 a0=55eec7dfeda0 a1=55eec7d57280 a2=55eec7cda3c0 a3=55eec7dfee90 items=3 ppid=1 pid=58491 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="augenrules" exe="/usr/bin/dash" subj=unconfined key="audittools"`
+	augenrulesExecve  = `type=EXECVE msg=audit(1644169369.368:91192): argc=3 a0="/bin/sh" a1="/sbin/augenrules" a2="--load"`
+)
+
+func readLines(t *testing.T, lines ...string) ([]*event.Event, Stats) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out []*event.Event
+	stats, err := New(dir).ReadFile(path, func(e *event.Event) error { out = append(out, e); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, stats
+}
+
+func execveOf(t *testing.T, events []*event.Event) *event.Event {
+	t.Helper()
+	for _, e := range events {
+		if e.Activity == "EXECVE" {
+			return e
+		}
+	}
+	t.Fatal("no EXECVE")
+	return nil
+}
+
+// The EXECVE gains the executable of its event's SYSCALL, in either order: an
+// export from a SIEM often runs newest first.
+func TestAnExecveGainsTheImageOfItsSyscall(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"as auditd writes it": {augenrulesSyscall, augenrulesExecve},
+		"newest first":        {augenrulesExecve, augenrulesSyscall},
+	} {
+		events, stats := readLines(t, lines...)
+		e := execveOf(t, events)
+		if e.Raw["Image"] != "/usr/bin/dash" || e.Process.Image.Value != "/usr/bin/dash" {
+			t.Errorf("%s: Image %q, process %+v", name, e.Raw["Image"], e.Process.Image)
+		}
+		if e.Raw["a0"] != "/bin/sh" {
+			t.Errorf("%s: a0 was replaced: %q", name, e.Raw["a0"])
+		}
+		if stats.Unjoined != 0 {
+			t.Errorf("%s: %d unjoined", name, stats.Unjoined)
+		}
+	}
+}
+
+// An EXECVE with no SYSCALL of its own event gets no Image, and is counted.
+// Every EXECVE of the pinned corpus is one of these.
+func TestAnExecveWithoutItsSyscallIsCountedAndNotGivenAnImage(t *testing.T) {
+	other := strings.Replace(augenrulesSyscall, ":91192)", ":91193)", 1)
+	events, stats := readLines(t, other, augenrulesExecve)
+	if img, ok := execveOf(t, events).Raw["Image"]; ok {
+		t.Errorf("an EXECVE was given the Image of another event: %q", img)
+	}
+	if stats.Unjoined != 1 {
+		t.Errorf("unjoined: %d, want 1", stats.Unjoined)
+	}
+}
+
+// Two different executables under one event: neither is chosen.
+func TestTwoSyscallsDisagreeingOnTheExecutableLeaveItUnknown(t *testing.T) {
+	other := strings.Replace(augenrulesSyscall, `exe="/usr/bin/dash"`, `exe="/usr/bin/bash"`, 1)
+	events, stats := readLines(t, augenrulesSyscall, other, augenrulesExecve)
+	if img, ok := execveOf(t, events).Raw["Image"]; ok || stats.Unjoined != 1 {
+		t.Errorf("Image %q, unjoined %d", img, stats.Unjoined)
+	}
+}
+
+// The serial restarts at boot, so it is not an identity on its own: the same
+// serial at another time is another event.
+func TestTheSameSerialAtAnotherTimeIsAnotherEvent(t *testing.T) {
+	later := strings.Replace(augenrulesSyscall, "1644169369.368:91192", "1644180000.000:91192", 1)
+	events, stats := readLines(t, later, augenrulesExecve)
+	if img, ok := execveOf(t, events).Raw["Image"]; ok || stats.Unjoined != 1 {
+		t.Errorf("joined across a reboot: Image %q, unjoined %d", img, stats.Unjoined)
+	}
+}

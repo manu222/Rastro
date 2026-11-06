@@ -73,6 +73,10 @@ type Stats struct {
 	FirstFailure error
 	// Stopped reports that a limit cut the read short.
 	Stopped string
+	// Unjoined counts EXECVE records whose SYSCALL is not in the same file,
+	// so their Image is unknown. Every EXECVE of the pinned corpus is one:
+	// splunk/attack_data publishes extracts filtered by record type.
+	Unjoined int
 }
 
 // Reader walks one evidence directory's worth of audit logs.
@@ -114,6 +118,12 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 		}
 	}
 
+	// First pass: the executable of every SYSCALL, by event. See images.
+	exes, err := r.images(path)
+	if err != nil {
+		return stats, err
+	}
+
 	scan := bufio.NewScanner(fd)
 	max := r.Limits.MaxLine
 	if max <= 0 {
@@ -142,7 +152,11 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 			continue
 		}
 		stats.Records++
-		if err := emit(rec.Event(rel, line)); err != nil {
+		e := rec.Event(rel, line)
+		if rec.Type == "EXECVE" && !attachImage(e, rec, exes) {
+			stats.Unjoined++
+		}
+		if err := emit(e); err != nil {
 			return stats, err
 		}
 	}
@@ -150,6 +164,89 @@ func (r *Reader) ReadFile(path string, emit func(*event.Event) error) (Stats, er
 		return stats, fmt.Errorf("%s: %w", rel, err)
 	}
 	return stats, nil
+}
+
+// images reads the executable of every SYSCALL in a file, by event.
+//
+// An EXECVE names the arguments and not the program: a0 is what was typed.
+// The path is in the SYSCALL of the same event, which auditd writes with the
+// same msg=audit(time:serial). On the Zircolite v4.7.1 fixture, a real auditd
+// 2.8.5 capture, all seven EXECVE have their SYSCALL and the two disagree
+// where it matters: a0 "awk" is exe /usr/bin/mawk, a0 "/bin/sh" is
+// /usr/bin/dash. So Image comes from the SYSCALL and never from a0.
+//
+// A separate pass, because the order cannot be relied on: auditd writes the
+// SYSCALL first, and an export from a SIEM often runs newest first. Only the
+// SYSCALL lines are parsed, and two different executables under one event
+// leave it unresolved rather than picking one.
+func (r *Reader) images(path string) (map[string]string, error) {
+	fd, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer fd.Close()
+	scan := bufio.NewScanner(fd)
+	max := r.Limits.MaxLine
+	if max <= 0 {
+		max = 1 << 20
+	}
+	scan.Buffer(make([]byte, 0, 64<<10), max)
+
+	out := map[string]string{}
+	seen := 0
+	for scan.Scan() {
+		text := strings.TrimSpace(scan.Text())
+		if !strings.HasPrefix(text, "type=SYSCALL ") {
+			continue
+		}
+		if seen++; r.Limits.MaxRecords > 0 && seen > r.Limits.MaxRecords {
+			break
+		}
+		rec, err := Parse(text)
+		if err != nil {
+			continue // the main pass counts it
+		}
+		key, ok := eventKey(rec)
+		exe := strings.Trim(rec.Fields["exe"], `"`)
+		if !ok || Unavailable(exe) {
+			continue
+		}
+		if prev, dup := out[key]; dup && prev != exe {
+			out[key] = ""
+			continue
+		}
+		out[key] = exe
+	}
+	return out, scan.Err()
+}
+
+// eventKey is the identity auditd gives an event: its time and its serial.
+// The serial alone restarts at boot. A record with no readable time has no
+// identity to join on.
+func eventKey(rec Record) (string, bool) {
+	if rec.NoTime || rec.Serial == "" {
+		return "", false
+	}
+	return strconv.FormatInt(rec.Time.UnixNano(), 10) + ":" + rec.Serial, true
+}
+
+// attachImage puts the event's executable on an EXECVE, as a native field
+// under the name the process_creation rules use, and reports whether there was
+// one to put.
+func attachImage(e *event.Event, rec Record, exes map[string]string) bool {
+	key, ok := eventKey(rec)
+	if !ok {
+		return false
+	}
+	exe := exes[key]
+	if exe == "" {
+		return false
+	}
+	if _, taken := e.Raw["Image"]; !taken {
+		e.Raw["Image"] = exe
+	}
+	e.Process.Image = event.Seen(exe)
+	return true
 }
 
 // Record is one parsed audit record.

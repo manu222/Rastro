@@ -78,3 +78,28 @@ func TestAFileFindingCarriesThePEAnalysisThroughAnalyse(t *testing.T) {
 		t.Errorf("the finding does not carry the PE analysis: %+v", matches[0].Exe)
 	}
 }
+
+// An EXECVE whose SYSCALL is not in the evidence says so in the report, because
+// every rule asking for Image is blind to it. The line is the pinned corpus's,
+// from datasets-linux, unchanged.
+func TestAnExecveWithNoSyscallIsDeclaredInTheReport(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	dir := t.TempDir()
+	line := `type=EXECVE msg=audit(1723044684.257:15795): argc=3 a0="sudo" a1="LD_PRELOAD=./myfopen.so" a2="./prog"` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "audit.log"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, _, _, err := analyse(filepath.Join(root, "rules"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range in.Notes {
+		if strings.HasPrefix(n, "1 audit EXECVE") {
+			return
+		}
+	}
+	t.Errorf("no note about the EXECVE without its SYSCALL: %q", in.Notes)
+}

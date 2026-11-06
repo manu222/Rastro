@@ -83,6 +83,7 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	var matches []report.Match
 
 	start := time.Now()
+	unjoined := 0
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -153,6 +154,7 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			// read, which is the same thing a record that would not parse is
 			// on the Windows side, so it is counted the same way.
 			in.UnreadableRecords += stats.Unparsed
+			unjoined += stats.Unjoined
 			failure = stats.FirstFailure
 		case sourceZeek:
 			stats, err := network.ReadFile(path, visit)
@@ -230,6 +232,13 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			"sources keep their own clocks, and evidence that has been through a log shipper can " +
 			"carry a time hours or days from the one the capture used, so times in this report " +
 			"order events within a source and do not date them across sources.",
+	}
+
+	if unjoined > 0 {
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"%d audit EXECVE record(s) have no SYSCALL of the same event in their file, so the "+
+				"program that ran is unknown and a rule asking for Image cannot match them. "+
+				"Extracts filtered by record type are written that way.", unjoined))
 	}
 
 	return in, matches, diag, nil
