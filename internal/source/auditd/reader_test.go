@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/manu222/rastro/internal/event"
+	"github.com/manu222/rastro/internal/sigma"
 )
 
 // Every line in these tests was taken out of the pinned Linux corpus, not
@@ -318,5 +319,44 @@ func TestTheFileNameIsNotAHostname(t *testing.T) {
 	e = parse(t, `type=EXECVE msg=audit(1.0:1): node=web01 argc=1 a0="sh"`).Event("f.log", 1)
 	if e.Host.Value != "web01" {
 		t.Errorf("a node name the log does carry was not used: %q", e.Host.Value)
+	}
+}
+
+// A rule written for linux/process_creation asks for CommandLine, because the
+// public corpus writes them for Sysmon for Linux. The EXECVE below is from
+// datasets-linux, unchanged; before CommandLine was a native field, the rule
+// reached it and matched nothing. A provider field of the same name is kept.
+func TestAProcessCreationRuleMatchesAnExecveOnItsCommandLine(t *testing.T) {
+	rec := parse(t, `type=EXECVE msg=audit(1723044684.257:15795): argc=3 a0="sudo" a1="LD_PRELOAD=./myfopen.so" a2="./prog"`)
+	e := rec.Event("f.log", 1)
+	if e.Raw["CommandLine"] != "sudo LD_PRELOAD=./myfopen.so ./prog" {
+		t.Fatalf("CommandLine: %q", e.Raw["CommandLine"])
+	}
+
+	path := filepath.Join(t.TempDir(), "rule.yml")
+	if err := os.WriteFile(path, []byte(`
+title: LD_PRELOAD on a command line
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection:
+        CommandLine|contains: 'LD_PRELOAD='
+    condition: selection
+level: medium
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sigma.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Applies(e.Origin.Product, e.Origin.Service, e.Origin.Categories...) || !c.Matches(e.Raw) {
+		t.Errorf("a process_creation rule on CommandLine does not match an EXECVE")
+	}
+
+	own := parse(t, `type=EXECVE msg=audit(1.0:1): argc=1 a0="x" CommandLine="as written"`)
+	if got := own.Event("f.log", 1).Raw["CommandLine"]; got != "as written" {
+		t.Errorf("a CommandLine the record carried was overwritten: %q", got)
 	}
 }

@@ -532,6 +532,18 @@ func classify(rec Record, e *event.Event) {
 		// deduction: every piece was recorded.
 		if cmd := commandLine(rec); cmd != "" {
 			e.Process.CommandLine = event.Seen(cmd)
+			// And as a native field, under the name the rules use. 123 rules
+			// of the public corpus ask for linux/process_creation, every one
+			// of them through CommandLine or Image, because they were written
+			// for Sysmon for Linux. Without this they reached every EXECVE
+			// and could match none: CommandLine|contains: 'LD_PRELOAD' found
+			// nothing on a record whose a1 is LD_PRELOAD=./myfopen.so. The
+			// argument fields stay; nothing is renamed (see the shipper
+			// aliases in winjson for the same rule). A provider field of the
+			// same name, if auditd ever wrote one, is not overwritten.
+			if _, taken := e.Raw["CommandLine"]; !taken {
+				e.Raw["CommandLine"] = cmd
+			}
 		}
 
 	case "SYSCALL":
