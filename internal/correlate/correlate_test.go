@@ -434,3 +434,27 @@ func TestAReusedLogonIdIsCountedRatherThanReplaced(t *testing.T) {
 		t.Errorf("the first session was replaced: %+v", l)
 	}
 }
+
+// Each step of a lineage carries where that process connected, found by GUID.
+func TestEachStepCarriesWhereItConnected(t *testing.T) {
+	ix := New()
+	const when, host = "2020-05-02T02:58:00Z", "SCRANTON.dmevals.local"
+	parent := creation(t, when, host, "{P}", "10", `C:\ProgramData\victim\cod.3aka3.scr`, "", "", "", `DMEVALS\pbeesly`, "0x3c4a1", "Medium", 1)
+	child := creation(t, when, host, "{C}", "11", `C:\Windows\System32\cmd.exe`, "{P}", "10", `C:\ProgramData\victim\cod.3aka3.scr`, `DMEVALS\pbeesly`, "0x3c4a1", "Medium", 2)
+	conn := hostConnection()
+	conn.Process.GUID = event.Seen("{P}")
+	conn.Raw["DestinationIp"], conn.Raw["DestinationPort"] = "192.168.0.5", "1234"
+	for _, e := range []*event.Event{parent, child, conn, conn} {
+		ix.Observe(e)
+	}
+	steps, _ := ix.Ancestry(child)
+	if len(steps) != 2 {
+		t.Fatalf("%d steps", len(steps))
+	}
+	if len(steps[0].Opened) != 0 {
+		t.Errorf("cmd.exe gained connections it did not open: %v", steps[0].Opened)
+	}
+	if got := steps[1].Opened; len(got) != 1 || got[0] != "192.168.0.5:1234 over tcp" {
+		t.Errorf("the screensaver's connection, once: %v", got)
+	}
+}

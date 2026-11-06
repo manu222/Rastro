@@ -251,6 +251,9 @@ func writeFindingMarkdown(out *writer, n int, f Finding) {
 				line += "   " + s.Integrity
 			}
 			out.raw(line)
+			if len(s.Opened) > 0 {
+				out.raw(strings.Repeat("  ", i) + "  -> connected to " + strings.Join(s.Opened, ", "))
+			}
 		}
 		if !f.LineageComplete {
 			out.raw("(the chain stops here: the parent's creation is not in this evidence)")

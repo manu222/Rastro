@@ -104,7 +104,7 @@ things and a report must not blur them.
 | `internal/ruletest/` | The harness that runs every rule against its manifest |
 | `cmd/rastro-spike/` | The feasibility probe that came first, kept for what it found |
 | `scripts/` | Local checks, corpus fetchers, and the provider manifest export |
-| `tools/`, `datasets/`, `datasets-linux/`, `datasets-compound/` | External tools and public evidence, not versioned |
+| `tools/`, `datasets/`, `datasets-linux/`, `datasets-compound/`, `datasets-apt29/` | External tools and public evidence, not versioned |
 
 ## The rule engine
 

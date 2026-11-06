@@ -2,6 +2,7 @@ package correlate
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/manu222/rastro/internal/event"
@@ -189,6 +190,11 @@ func (ix *Index) Connection(e *event.Event) Connection {
 	if via != "" {
 		where += " (" + via + ")"
 	}
+	if port, fixed := fixedClientPort(key); fixed {
+		return Connection{Unresolved: fmt.Sprintf(
+			"the client port %s is a fixed one, so %s recurs on every exchange between these two "+
+				"machines and does not identify one connection", port, where)}
+	}
 
 	if fromNetwork {
 		switch candidates := ix.hostConns[key]; len(candidates) {
@@ -302,6 +308,26 @@ func tuple(sip, sport, dip, dport, proto string) (string, bool, bool) {
 	return strings.ToLower(sip + "\x00" + sport + "\x00" + dip + "\x00" + dport + "\x00" + proto), true, true
 }
 
+// fixedClientPort says whether the side that opened the connection used a port
+// below 1024. A five-tuple identifies a connection because the client's port is
+// ephemeral; NTP (123 to 123) and NetBIOS (137, 138) use a fixed one, and the
+// same tuple comes back on every exchange, on every day.
+//
+// Measured before deciding: over the seven compound campaigns, where host and
+// wire are the same run, no unique join has a client port below 1024. Over day
+// 1 of the APT29 evaluation, whose network half was captured two days before
+// its host half, the only two unique joins are NetBIOS 137 to 137, matched
+// across those two days. Day 2 has 21 and one of them is NTP. So these tuples
+// are not joined at all, and the finding says why.
+func fixedClientPort(key string) (string, bool) {
+	p := strings.Split(key, "\x00")
+	if len(p) != 5 {
+		return "", false
+	}
+	n, err := strconv.Atoi(p[1])
+	return p[1], err == nil && n < 1024
+}
+
 // describe writes a tuple the way an analyst would say it out loud, because it
 // ends up in a sentence in a report.
 func describe(key string) string {
@@ -373,7 +399,9 @@ func (ix *Index) Network(e *event.Event) Reach {
 		s := Sighting{Remote: h.Remote, Protocol: h.Protocol, Origin: h.Origin}
 		// Only an unambiguous flow is attached. Two flows sharing a tuple are
 		// two candidates, and the tiebreak would be the time.
-		if candidates := ix.flows[h.Key]; len(candidates) == 1 {
+		if _, fixed := fixedClientPort(h.Key); fixed {
+			// Not one connection: see fixedClientPort.
+		} else if candidates := ix.flows[h.Key]; len(candidates) == 1 {
 			s.Flow = candidates[0]
 			r.OnWire++
 		}

@@ -3,6 +3,7 @@ tools/
 datasets/
 datasets-linux/
 datasets-compound/
+datasets-apt29/
 
 # --- Analysis output ---
 *.csv

@@ -95,3 +95,16 @@ broken setup would report success by quietly running nothing at all.
    hit count and a note explaining what the sample actually contains.
 3. Record the total, and the engine if it is not Hayabusa.
 4. If the rule has exclusion filters, add a negative control.
+
+## The ticket test
+
+The manifests check rules one at a time. `TestTheAPT29DayOneTicket` in
+`cmd/rastro` checks the report as a whole: it runs the full analysis over day 1
+of the APT29 evaluation and asserts the answers an analyst needs to close the
+ticket (host, account, way in, escalation, C2, lateral movement, persistence)
+against MITRE's emulation plan. `docs/ticket-apt29.md` walks through it.
+
+```
+scripts/fetch-apt29.sh                  # or .ps1 on Windows, about 60 MB
+go test ./cmd/rastro -run APT29 -v
+```

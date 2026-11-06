@@ -47,6 +47,7 @@ var htmlTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
 	// repeat indents a step of a process lineage. It returns plain text that
 	// the template escapes like any other value.
 	"repeat": func(n int) string { return strings.Repeat("  ", n) },
+	"join":   func(s []string) string { return strings.Join(s, ", ") },
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -204,7 +205,8 @@ The evidence does not name an account: {{ . }}{{ end }}{{ end }}.</p>
 {{ with $f.Lineage }}
 <p><strong>How it got there</strong></p>
 <pre>{{ range $i, $s := . }}{{ repeat $i }}{{ $s.Image }}{{ with $s.Account }}   {{ . }}{{ end }}{{ with $s.Integrity }}   {{ . }}{{ end }}
-{{ end }}{{ if not $f.LineageComplete }}(the chain stops here: the parent's creation is not in this evidence)
+{{ with $s.Opened }}{{ repeat $i }}  -&gt; connected to {{ join . }}
+{{ end }}{{ end }}{{ if not $f.LineageComplete }}(the chain stops here: the parent's creation is not in this evidence)
 {{ end }}</pre>
 {{ end }}
 {{ range $f.AccountChanges }}

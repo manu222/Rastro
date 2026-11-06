@@ -251,7 +251,9 @@ type Step struct {
 	CommandLine string `json:"command_line,omitempty"`
 	Account     string `json:"account,omitempty"`
 	Integrity   string `json:"integrity,omitempty"`
-	Origin      Record `json:"origin"`
+	// Opened is where this process connected, as the host recorded it.
+	Opened []string `json:"opened,omitempty"`
+	Origin Record   `json:"origin"`
 }
 
 // AccountChange is a point where the account changed between a process and its
@@ -596,7 +598,8 @@ func buildFinding(m Match) Finding {
 	// Oldest first, which is the order it happened in, and without the step
 	// that is the event itself.
 	for i := len(m.Lineage) - 1; i >= 0; i-- {
-		p := m.Lineage[i].Process
+		st := m.Lineage[i]
+		p := st.Process
 		if p.Origin.Path == e.Origin.Path && p.Origin.Record == e.Origin.Record {
 			continue
 		}
@@ -605,6 +608,7 @@ func buildFinding(m Match) Finding {
 			CommandLine: oneLine(p.CommandLine),
 			Account:     p.User,
 			Integrity:   p.Integrity,
+			Opened:      st.Opened,
 			Origin:      Record{File: p.Origin.Path, Number: p.Origin.Record},
 		})
 	}

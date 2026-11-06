@@ -655,3 +655,22 @@ func TestAnEmptyRunWritesEmptyListsAndNotNull(t *testing.T) {
 		t.Errorf("a list came out as null:\n%s", js.String())
 	}
 }
+
+// Where an ancestor connected reaches the step, and every renderer shows it.
+func TestAnAncestorsConnectionsReachTheLineage(t *testing.T) {
+	m := sampleMatch()
+	m.Lineage[len(m.Lineage)-1].Opened = []string{"192.168.0.5:1234 over tcp"}
+	r := Build(Input{}, []Match{m})
+	if got := r.Findings[0].Lineage[0].Opened; len(got) != 1 || got[0] != "192.168.0.5:1234 over tcp" {
+		t.Fatalf("the oldest step lost its connection: %+v", r.Findings[0].Lineage)
+	}
+	for format, render := range map[string]func(io.Writer, *Report, Section) error{"md": Markdown, "html": HTML} {
+		var b bytes.Buffer
+		if err := render(&b, r, AllSections); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(b.String(), "connected to 192.168.0.5:1234 over tcp") {
+			t.Errorf("%s does not show the ancestor's connection", format)
+		}
+	}
+}

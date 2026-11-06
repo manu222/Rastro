@@ -147,3 +147,81 @@ func TestALinkedDayIsReadAndABrokenLinkIsDeclared(t *testing.T) {
 		t.Errorf("the broken link was not declared: %q", in.Notes)
 	}
 }
+
+// Two rows of day 2 of the APT29 evaluation's capture_loss.log, as the sensor
+// wrote them, and the conn.log row that makes the directory network evidence.
+const (
+	captureLossRows = `{"@stream":"capture_loss","@system":"test-nsm","@proc":"zeek","ts":1588317555.874701,"ts_delta":936.0768949985504,"peer":"zeek","gaps":9,"acks":1195,"percent_lost":0.7531380753138075}` + "\n" +
+		`{"@stream":"capture_loss","@system":"test-nsm","@proc":"zeek","ts":1588318370.510831,"ts_delta":814.6361300945282,"peer":"zeek","gaps":2,"acks":945,"percent_lost":0.21164021164021163}` + "\n"
+	connRow = `{"@stream":"conn","@system":"test-nsm","@proc":"zeek","ts":1588316975.913849,"uid":"CpInR124KhH6PdwVqf","id_orig_h":"10.0.1.4","id_orig_p":63472,"id_resp_h":"10.0.0.4","id_resp_p":53,"proto":"udp","service":"dns","conn_state":"SF"}` + "\n"
+)
+
+// What the sensor says it missed reaches the report, and network evidence
+// without that file says its completeness is unknown. capture_loss.log was
+// skipped as a sensor diagnostic before, so a capture that lost a third of the
+// traffic read exactly like one that lost none.
+func TestTheSensorsOwnLossReachesTheReport(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	note := func(files map[string]string) string {
+		dir := t.TempDir()
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		in, _, _, err := analyse(filepath.Join(root, "rules"), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.UnreadableRecords != 0 {
+			t.Errorf("%d unreadable records", in.UnreadableRecords)
+		}
+		for _, n := range in.Notes {
+			if strings.Contains(n, "capture_loss") {
+				return n
+			}
+		}
+		return ""
+	}
+	got := note(map[string]string{"conn.log": connRow, "capture_loss.log": captureLossRows})
+	for _, want := range []string{"missing 11 of 2140", "2 interval(s)", "9 of 1195", "capture_loss.log line 1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the loss note does not say %q: %q", want, got)
+		}
+	}
+	if got := note(map[string]string{"conn.log": connRow}); !strings.Contains(got, "unknown") {
+		t.Errorf("network evidence without capture_loss.log is not called unknown: %q", got)
+	}
+}
+
+// A logon id reused for a different account reaches the report's notes. The
+// note was appended during the first pass and then overwritten by the notes
+// every report carries, so the count in correlate was never seen.
+func TestALogonConflictReachesTheReport(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	logon := func(user string) string {
+		return `{"SourceName":"Microsoft-Windows-Security-Auditing","Channel":"Security","Hostname":"SCRANTON.dmevals.local",` +
+			`"TimeCreated":"2020-05-02T02:55:00.000Z","EventID":4624,"TargetUserName":"` + user +
+			`","TargetDomainName":"DMEVALS","TargetLogonId":"0x3c4a1","LogonType":"2"}` + "\n"
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "host.json"), []byte(logon("pbeesly")+logon("mscott")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, _, _, err := analyse(filepath.Join(root, "rules"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range in.Notes {
+		if strings.HasPrefix(n, "1 logon id(s)") {
+			return
+		}
+	}
+	t.Errorf("no note about the reused logon id: %q", in.Notes)
+}

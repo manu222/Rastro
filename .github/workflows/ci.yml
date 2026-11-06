@@ -93,6 +93,13 @@ jobs:
       - name: Fetch compound samples
         run: bash scripts/fetch-compound.sh
 
+      # The two days of the APT29 evaluation, the one corpus that is an
+      # intrusion rather than a technique: the ticket test in cmd/rastro checks
+      # the report against MITRE's plan for day 1. About 60 MB, at the commit
+      # pinned in tests/apt29-samples.txt.
+      - name: Fetch the APT29 evaluation
+        run: bash scripts/fetch-apt29.sh
+
       # The public rule corpus, so that the coverage figure in the README is a
       # number CI checks rather than a claim. Shallow and unpinned on purpose:
       # the point is that the loader keeps up with the rules people actually

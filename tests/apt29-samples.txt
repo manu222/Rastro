@@ -1,0 +1,37 @@
+# The two days of MITRE's ATT&CK evaluation emulating APT29, as OTRF recorded
+# them, pinned to one commit of OTRF/Security-Datasets (MIT).
+#
+# The other corpora each answer a question about one technique. This one is an
+# intrusion, in order, across five Windows machines and two days, with a public
+# account of what was done and when: MITRE's emulation plan for the evaluation.
+# That plan is the ground truth the ticket test in cmd/rastro checks the report
+# against (docs/ticket-apt29.md).
+#
+# Two things about it are worth knowing before reading any result:
+#
+#   The host and the network halves of day 1 are not the same run. The Zeek
+#   logs cover 00:06 to 00:45 UTC on 30 April and Sysmon's UtcTime runs from
+#   02:55 to 03:28 UTC on 2 May; the client ports of the connections to
+#   192.168.0.5 differ, and no five-tuple of one appears in the other. The
+#   join must find nothing, and the ticket test checks that it says so instead
+#   of matching on address.
+#
+#   The shipper wrote U+202E, the right-to-left override in the name of the
+#   first-stage file, encoded twice: the path arrives as C:\ProgramData\victim\
+#   followed by the bytes of "â€®" and cod.3aka3.scr. The tool shows the value
+#   as it arrived.
+#
+# Format: the commit, then one archive per line with the directory under
+# datasets-apt29/ it is unpacked into. The host half becomes host.json.gz there
+# and the Zeek logs keep their names, the sensor's own logs included, because
+# that is how a collection copied out of a deployment arrives.
+
+commit d9d40ef123d2c87d5d3df28c96bcab4f0faccc87
+
+datasets/compound/apt29/day1/apt29_evals_day1_manual.zip   day1/host
+datasets/compound/apt29/day1/zeek/NASHUA-zeek_logs.zip     day1/nashua
+datasets/compound/apt29/day1/zeek/SCRANTON-zeek_logs.zip   day1/scranton
+
+datasets/compound/apt29/day2/apt29_evals_day2_manual.zip   day2/host
+datasets/compound/apt29/day2/zeek/NEWYORK-zeek_logs.zip    day2/newyork
+datasets/compound/apt29/day2/zeek/SCRANTON-zeek_logs.zip   day2/scranton

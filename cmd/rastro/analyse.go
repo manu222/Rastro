@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,8 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 
 	start := time.Now()
 	unjoined := 0
+	var loss captureLoss
+	zeekFiles := 0
 	files, broken, err := evidenceFiles(root)
 	if err != nil {
 		return in, nil, diag, err
@@ -100,6 +103,21 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			return nil
 		}
 		in.Files++
+		if kind == sourceSensor {
+			stats, err := network.ReadFile(path, func(e *event.Event) error {
+				loss.add(e, relTo(root, path))
+				return nil
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filepath.Base(path), err)
+			}
+			in.UnreadableRecords += stats.Unparsed + stats.Malformed + loss.unusable
+			loss.unusable = 0
+			return nil
+		}
+		if kind == sourceZeek {
+			zeekFiles++
+		}
 
 		visit := func(e *event.Event) error {
 			in.Records++
@@ -221,8 +239,10 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 
 	// The blind spots that are properties of the method rather than of this
 	// run. They belong in every report, because a reader cannot be expected to
-	// have read the repository.
-	in.Notes = []string{
+	// have read the repository. They go first and what this run found goes
+	// after: assigning them used to throw away the logon-conflict note
+	// appended during the first pass.
+	in.Notes = append([]string{
 		"An audit record written as `unit= auditd`, with a space after the equals sign, " +
 			"carries no unit field at all, so a rule looking for a stopped service cannot " +
 			"see it. Three records of this corpus are written that way.",
@@ -240,7 +260,26 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		"The host and the network are joined on the five-tuple and never on time. The two " +
 			"sources keep their own clocks, and evidence that has been through a log shipper can " +
 			"carry a time hours or days from the one the capture used, so times in this report " +
-			"order events within a source and do not date them across sources.",
+			"order events within a source and do not date them across sources. A tuple whose client " +
+			"port is below 1024, as NTP's and NetBIOS's are, repeats on every exchange and is not joined.",
+	}, in.Notes...)
+
+	// What the correlation index refused to hold. A lineage cut short by a
+	// limit looks exactly like evidence that was never collected, and the
+	// counter existed for this sentence without anything ever writing it.
+	if lineage.Dropped > 0 {
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"%d process creation(s) or logon session(s) were not indexed because the correlation "+
+				"limits were reached; a lineage or an account that ends early here may end because of "+
+				"that and not because the evidence stops.", lineage.Dropped))
+	}
+	if lineage.DroppedFlows > 0 {
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"%d connection(s) were not indexed because the flow limit was reached; a host connection "+
+				"reported as unseen on the wire may be one of them.", lineage.DroppedFlows))
+	}
+	if n := loss.note(zeekFiles); n != "" {
+		in.Notes = append(in.Notes, n)
 	}
 
 	if len(broken) > 0 {
@@ -269,6 +308,10 @@ const (
 	sourceAuditd
 	sourceZeek
 	sourceWinJSON
+	// What the network sensor says about itself that bears on the evidence:
+	// capture_loss.log, the share of segments it saw acknowledged and never
+	// saw sent. Read for the report's limits, never matched against rules.
+	sourceSensor
 )
 
 func sourceOf(path string) sourceKind {
@@ -296,6 +339,9 @@ func sourceOf(path string) sourceKind {
 		// log, and a file that turns out to be neither is counted as unread
 		// lines rather than silently producing nothing.
 		name := strings.TrimSuffix(base, ".log")
+		if name == "capture_loss" {
+			return sourceSensor
+		}
 		if zeekDiagnostics[name] {
 			// Zeek's own operational logs. They say what the sensor was doing
 			// rather than what happened on the wire, so they are evidence of
@@ -340,7 +386,7 @@ var zeekLogs = map[string]bool{
 // that could not be read when there was nothing in them to read.
 var zeekDiagnostics = map[string]bool{
 	"analyzer": true, "packet_filter": true, "loaded_scripts": true,
-	"reporter": true, "stats": true, "capture_loss": true, "cluster": true,
+	"reporter": true, "stats": true, "cluster": true,
 	"broker": true, "telemetry": true, "known_services": true,
 }
 
@@ -349,4 +395,61 @@ func relTo(root, path string) string {
 		return filepath.ToSlash(r)
 	}
 	return path
+}
+
+// captureLoss adds up what Zeek's capture_loss.log says the sensor missed. Each
+// row is an interval: segments it saw acknowledged, and how many of those it
+// never saw sent. The ratio is computed here from the two counts rather than
+// read from percent_lost, which is the same number rounded by someone else.
+type captureLoss struct {
+	intervals  int
+	gaps, acks int64
+	worstGaps  int64
+	worstAcks  int64
+	worstAt    string
+	unusable   int
+}
+
+func (c *captureLoss) add(e *event.Event, file string) {
+	gaps, err1 := strconv.ParseInt(e.Raw["gaps"], 10, 64)
+	acks, err2 := strconv.ParseInt(e.Raw["acks"], 10, 64)
+	if err1 != nil || err2 != nil || gaps < 0 || acks < 0 {
+		c.unusable++
+		return
+	}
+	c.intervals++
+	c.gaps += gaps
+	c.acks += acks
+	// gaps/acks > worstGaps/worstAcks, without dividing by zero.
+	if acks > 0 && (c.worstAcks == 0 || gaps*c.worstAcks > c.worstGaps*acks) {
+		c.worstGaps, c.worstAcks = gaps, acks
+		c.worstAt = fmt.Sprintf("%s line %d", file, e.Origin.Record)
+	}
+}
+
+// note is what the report says about the sensor. Network evidence with no
+// capture_loss.log is said to be of unknown completeness rather than passed
+// over, because no loss reported and no loss are different statements.
+func (c *captureLoss) note(zeekFiles int) string {
+	switch {
+	case c.intervals == 0 && zeekFiles == 0:
+		return ""
+	case c.intervals == 0:
+		return "The network evidence carries no capture_loss.log, so how much traffic the sensor " +
+			"missed is unknown: a connection reported as unseen on the wire may have crossed it uncaptured."
+	case c.gaps == 0:
+		return fmt.Sprintf("The network sensor reported no capture loss in %d interval(s), %d acknowledged "+
+			"segment(s) in all (capture_loss.log).", c.intervals, c.acks)
+	}
+	return fmt.Sprintf("The network sensor reported missing %d of %d acknowledged segment(s) over %d "+
+		"interval(s) (%s); the worst interval missed %d of %d, at %s. A connection reported as unseen "+
+		"on the wire may be one it missed.", c.gaps, c.acks, c.intervals, percent(c.gaps, c.acks),
+		c.worstGaps, c.worstAcks, c.worstAt)
+}
+
+func percent(part, whole int64) string {
+	if whole == 0 {
+		return "no acknowledged segments"
+	}
+	return strconv.FormatFloat(100*float64(part)/float64(whole), 'f', 2, 64) + "%"
 }

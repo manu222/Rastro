@@ -581,3 +581,32 @@ func TestAnOldFilesLogReachesItsConnectionThroughConnUIDs(t *testing.T) {
 		t.Errorf("a file that crossed two connections was attributed: %+v", c)
 	}
 }
+
+// NetBIOS from SCRANTON, 137 to 137: the tuple the APT29 evaluation's day 1
+// joined across two days, because a fixed client port repeats it on every
+// exchange. Neither direction of the join takes it, and the process does not
+// gain it as a flow seen on the wire.
+func TestAFixedClientPortIsNotJoined(t *testing.T) {
+	flow := zeekFlow()
+	host := hostConnection()
+	flow.Raw["id.orig_h"], flow.Raw["id.orig_p"], flow.Raw["id.resp_h"], flow.Raw["id.resp_p"], flow.Raw["proto"] =
+		"10.0.1.4", "137", "10.0.1.255", "137", "udp"
+	host.Raw["SourceIp"], host.Raw["SourcePort"], host.Raw["DestinationIp"], host.Raw["DestinationPort"], host.Raw["Protocol"] =
+		"10.0.1.4", "137", "10.0.1.255", "137", "udp"
+	ix := New()
+	ix.Observe(flow)
+	ix.Observe(host)
+
+	for name, c := range map[string]Connection{"wire": ix.Connection(flow), "host": ix.Connection(host)} {
+		if c.Found() {
+			t.Errorf("%s: a fixed-port tuple was joined", name)
+		}
+		if !strings.Contains(c.Unresolved, "client port 137 is a fixed one") {
+			t.Errorf("%s: the reason does not say why: %q", name, c.Unresolved)
+		}
+	}
+	r := ix.Network(&event.Event{Process: event.Process{GUID: host.Process.GUID}, Raw: event.Fields{"EventID": "10"}})
+	if r.Total != 1 || r.OnWire != 0 {
+		t.Errorf("the process gained a fixed-port flow as seen on the wire: %+v", r)
+	}
+}

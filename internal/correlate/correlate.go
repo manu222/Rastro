@@ -321,6 +321,12 @@ type Step struct {
 	// Why is empty on the step the event itself names, and otherwise says which
 	// record the step was reached through.
 	Why string
+	// Opened is where this process connected, each remote end once, in the
+	// order the host recorded them. The ancestors' connections are the ones a
+	// finding on a child never shows otherwise: on day 1 of APT29 the
+	// screensaver at the root of the chain opened 192.168.0.5:1234, and the
+	// LSASS finding three steps below it had no way to say so.
+	Opened []string
 }
 
 // Ancestry walks from the process an event names up to the oldest ancestor the
@@ -334,7 +340,7 @@ func (ix *Index) Ancestry(e *event.Event) (steps []Step, complete bool) {
 	if !ok {
 		return nil, false
 	}
-	steps = append(steps, Step{Process: start, Why: why})
+	steps = append(steps, Step{Process: start, Why: why, Opened: ix.opened(start)})
 
 	current := start
 	for depth := 1; ix.Limits.MaxDepth == 0 || depth < ix.Limits.MaxDepth; depth++ {
@@ -348,10 +354,28 @@ func (ix *Index) Ancestry(e *event.Event) (steps []Step, complete bool) {
 		if next == current {
 			return steps, false
 		}
-		steps = append(steps, Step{Process: next, Why: why})
+		steps = append(steps, Step{Process: next, Why: why, Opened: ix.opened(next)})
 		current = next
 	}
 	return steps, false
+}
+
+// opened lists the remote ends a process connected to, by its GUID only: a pid
+// is reused and would hand one process another's connections.
+func (ix *Index) opened(p *Process) []string {
+	if p.GUID == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, h := range ix.byProcess[p.GUID] {
+		end := h.Remote + " over " + h.Protocol
+		if !seen[end] {
+			seen[end] = true
+			out = append(out, end)
+		}
+	}
+	return out
 }
 
 func (ix *Index) parentOf(p *Process) (*Process, string, bool) {
