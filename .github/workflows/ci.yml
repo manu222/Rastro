@@ -11,6 +11,11 @@ env:
   HAYABUSA_VERSION: 4.0.0
   DATASET_COMMIT: 4ceed2f4706daf601c212a8f91c113dd85349a2c
   ZIRCOLITE_VERSION: v4.7.1
+  # What CI was installing unpinned while it was green. pySigma is pinned with
+  # it because sigma-cli accepts a range, and 2.0.2 is also the version the
+  # category table in internal/winevent/category.go was read from.
+  SIGMA_CLI_VERSION: 4.0.0
+  PYSIGMA_VERSION: 2.0.2
 
 jobs:
   rules:
@@ -29,8 +34,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The validators still download MITRE ATT&CK and D3FEND at run time, so
+      # the tag check follows the live catalogue and fails without a network.
+      # That is the same choice as the unpinned SigmaHQ clone below: tags are
+      # checked against what ATT&CK says today.
       - name: Install sigma-cli
-        run: pip install --disable-pip-version-check sigma-cli
+        run: |
+          pip install --disable-pip-version-check \
+            "sigma-cli==${SIGMA_CLI_VERSION}" "pysigma==${PYSIGMA_VERSION}"
+          sigma version
 
       # Format check: catches a malformed rule before it ever runs.
       - name: Validate rule syntax
