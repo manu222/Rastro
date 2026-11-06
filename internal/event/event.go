@@ -291,9 +291,11 @@ type Origin struct {
 // report.
 //
 // This is the hot path: one of these per event, a million events in a large
-// case. It is a map for now because correctness comes first and the shape of
-// the lookups is not settled yet; the allocation cost gets measured before the
-// pipeline is called finished, not guessed at now.
+// case. It stays a map, and that was measured rather than assumed: 1,093,218
+// records of the compound corpus run in 77.6 s on two vCPUs at a 46 MB peak,
+// against 27 MB for a third of them. Events are dropped after matching, so
+// what grows is the ancestry and flow indexes, not this; a faster layout would
+// buy seconds on a triage tool and cost the simplicity of a field lookup.
 type Fields map[string]string
 
 // Event is one normalised record. Construction is cheap on purpose: the

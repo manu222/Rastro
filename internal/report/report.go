@@ -826,10 +826,10 @@ func buildEntities(findings []Finding) []Entity {
 // reader to think there were two.
 //
 // Paths are deliberately left alone. Windows does not distinguish their case
-// either, but Linux does, and there is no reader for Linux evidence yet to say
-// which rule applies to a given path. Merging them now would be a guess that
-// becomes wrong the day that reader lands; the consequence meanwhile is that
-// one file can appear twice, which is visible rather than silent.
+// either, but Linux does, and one report can hold evidence of both: an entity
+// does not carry which system its path came from, so merging by case would be
+// right for one and wrong for the other. The consequence is that one Windows
+// file can appear twice, which is visible rather than silent.
 func identity(kind, name string) string {
 	switch kind {
 	case "host", "account", "group", "hash", "domain":

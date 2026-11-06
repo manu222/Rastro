@@ -375,8 +375,8 @@ func TestTwoSpellingsOfOneAccountAreOneEntity(t *testing.T) {
 }
 
 // A path keeps its case, because Windows does not distinguish it and Linux
-// does, and there is no reader for Linux evidence yet to say which rule
-// applies. The consequence is visible rather than silent.
+// does, and an entity does not say which system its path came from. The
+// consequence is visible rather than silent.
 func TestPathsAreNotMergedByCase(t *testing.T) {
 	a := sampleMatch()
 	a.Event.Entities = nil

@@ -217,12 +217,12 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		"An audit record written as `unit= auditd`, with a space after the equals sign, " +
 			"carries no unit field at all, so a rule looking for a stopped service cannot " +
 			"see it. Three records of this corpus are written that way.",
-		"Sysmon writes its WMI events with the values quoted and the backslashes doubled, " +
-			"so a rule matching a plain path against a Sysmon 19, 20 or 21 will not fire.",
+		"Sysmon writes the values of its WMI events (19, 20, 21) with a leading space, in double " +
+			"quotes, with backslashes doubled: Destination arrives as ` \"c:\\\\Windows\\\\System32\\\\cmd.exe\"`. " +
+			"They are matched as written, as every other Sigma backend sees them, so a rule comparing " +
+			"a plain path with endswith or equality will not fire there; contains on a fragment does.",
 		"Windows' message-table codes (%%NNNN) that this tool has no source for are shown as " +
 			"written rather than guessed; `rastro read -codes` lists them.",
-		"There is no reader for Linux audit logs yet, so rules written against auditd " +
-			"load, run and report nothing.",
 		"Zeek counts the payload bytes each side of a connection sent, and in three of its " +
 			"connection states — SHR, RSTRH and OTH — it also records that it never saw the side " +
 			"that opened the connection. Where this report says a capture did not see the " +

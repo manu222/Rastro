@@ -1,6 +1,7 @@
 package winevent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -362,5 +363,53 @@ func TestHashesBecomeOneEntityPerDigest(t *testing.T) {
 		if !strings.Contains(d, "=") {
 			t.Errorf("the algorithm was stripped from %q, and a bare hex string does not say what it is", d)
 		}
+	}
+}
+
+// The GroupMembership of a 4627 becomes one group per line. The value is record
+// 3 of remote_sam_registry_access_via_backup_operator_priv.evtx, unchanged.
+func TestTheGroupsOfALogonBecomeOneEntityEach(t *testing.T) {
+	const membership = "\r\n\t\t%{S-1-5-21-308926384-506822093-3341789130-515}\r\n\t\t%{S-1-1-0}\r\n\t\t%{S-1-5-32-545}\r\n\t\t%{S-1-5-32-554}\r\n\t\t%{S-1-5-2}\r\n\t\t%{S-1-5-11}\r\n\t\t%{S-1-5-15}\r\n\t\t%{S-1-18-1}\r\n\t\t%{S-1-16-8448}"
+	got := tokenGroups(membership)
+	if len(got) != 9 || got[0] != "S-1-5-21-308926384-506822093-3341789130-515" || got[8] != "S-1-16-8448" {
+		t.Fatalf("groups: %q", got)
+	}
+	if g := tokenGroups("\t\tDOMAIN\\Admins\r\n"); len(g) != 1 || g[0] != "DOMAIN\\Admins" {
+		t.Errorf("a resolved name was not kept as written: %q", g)
+	}
+
+	e := &event.Event{}
+	Classify(Flat{Producer: security, EventID: 4627, Fields: map[string]string{"GroupMembership": membership}}, e)
+	n := 0
+	for _, en := range e.Entities {
+		if en.Kind == event.KindGroup && en.Role == "token group" && en.Field.Trusted() {
+			n++
+		}
+	}
+	if n != 9 {
+		t.Errorf("%d group entities, want 9", n)
+	}
+}
+
+// Sysmon writes its WMI values with a leading space, in quotes, with doubled
+// backslashes. That is the data, and every other Sigma backend matches it as
+// such; rewriting it here would make rastro disagree with them on the same
+// evidence. Record 4 of sysmon_20_21_1_CommandLineEventConsumer.evtx.
+func TestTheQuotedValuesOfSysmonWMIEventsAreKeptAsWritten(t *testing.T) {
+	const dest = ` "c:\\Windows\\System32\\cmd.exe"`
+	rec := map[string]any{"Event": map[string]any{
+		"System": map[string]any{
+			"Provider": map[string]any{"#attributes": map[string]any{"Name": "Microsoft-Windows-Sysmon"}},
+			"EventID":  json.Number("20"),
+			"Channel":  "Microsoft-Windows-Sysmon/Operational",
+		},
+		"EventData": map[string]any{"Destination": dest, "Type": "Command Line"},
+	}}
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Fields["Destination"] != dest {
+		t.Errorf("the WMI value was rewritten: %q", f.Fields["Destination"])
 	}
 }

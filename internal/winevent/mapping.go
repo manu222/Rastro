@@ -317,10 +317,9 @@ var mappings = map[string]map[int]Mapping{
 			Action:  "group membership of a logon",
 			User:    securitySubject,
 			Subject: securityTargetUserSid,
-			// GroupMembership holds every group SID of the session in one
-			// field, newline separated. Splitting it into entities needs a rule
-			// about that field's format, which is a decision for when the
-			// report exists and not a guess now.
+			// GroupMembership holds every group SID of the session's token in
+			// one field. See tokenGroups for the format, read off the corpus.
+			Entities: []Ref{{Kind: event.KindGroup, Field: "GroupMembership", Role: "token group"}},
 		},
 		// 4656 and 4663 describe access to an object whose kind is in a field
 		// rather than in the event id: ObjectType is File, Key or Process
@@ -610,8 +609,38 @@ func Classify(f Flat, e *event.Event) {
 			}
 			continue
 		}
+		if r.Field == "GroupMembership" {
+			for _, g := range tokenGroups(text(f, r.Field)) {
+				e.Add(r.Kind, r.Role, valueOf2(g))
+			}
+			continue
+		}
 		e.Add(r.Kind, r.Role, valueOf(f, r.Field))
 	}
+}
+
+// tokenGroups splits the GroupMembership of a 4627 into one value per group.
+//
+// The format is the one all seven 4627 records of the corpus carry: one SID per
+// line, indented with tabs, wrapped in %{...}, which is how Windows writes a SID
+// it has not resolved to a name. A line without the wrapper is kept as written,
+// because a rendered export may carry names instead, and a name is still a
+// group. Every value is the record's own; nothing is resolved here. The list
+// includes the token's integrity label (S-1-16-...), which Windows puts in the
+// same field and which is kept, because dropping part of a recorded list would
+// be deciding which of its members matter.
+func tokenGroups(v string) []string {
+	var out []string
+	for _, line := range strings.Split(v, "\n") {
+		g := strings.TrimSpace(line)
+		if strings.HasPrefix(g, "%{") && strings.HasSuffix(g, "}") {
+			g = strings.TrimSpace(g[2 : len(g)-1])
+		}
+		if g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func processOf(f Flat, p Proc) event.Process {

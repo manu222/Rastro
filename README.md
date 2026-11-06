@@ -91,18 +91,20 @@ things and a report must not blur them.
 | `internal/source/evtx/` | Reads Windows event logs, with per-file limits and a damaged-chunk count that never aborts a file |
 | `internal/source/auditd/` | Reads Linux audit logs, in the three styles the corpus contains |
 | `internal/source/zeek/` | Reads Zeek logs, both the TSV and the JSON form |
+| `internal/source/winjson/` | Reads Windows events as a log shipper wrote them, `.json` and `.json.gz`, with an audit of field forms and clocks |
 | `internal/winevent/` | What a Windows record means: flattening, 46 mapped event ids, the translations |
 | `internal/normalise/` | Restores the text a provider wrote when the parser changed its shape |
 | `internal/event/` | The event model, including where each value came from |
 | `internal/sigma/` | Rule loader and engine |
 | `internal/correlate/` | Who was behind a finding, how it got there, and where it came in |
 | `internal/report/` | One report, three renderings, three views |
-| `rules/windows/`, `rules/linux/` | The detection rules |
+| `rules/windows/`, `rules/linux/`, `rules/network/` | The detection rules |
 | `tests/` | One manifest per rule: which samples it must match, and how many times |
 | `templates/` | A rule skeleton per telemetry source, carrying the real field names |
 | `internal/ruletest/` | The harness that runs every rule against its manifest |
 | `cmd/rastro-spike/` | The feasibility probe that came first, kept for what it found |
-| `tools/`, `datasets/`, `datasets-linux/` | External tools and public evidence, not versioned |
+| `scripts/` | Local checks, corpus fetchers, and the provider manifest export |
+| `tools/`, `datasets/`, `datasets-linux/`, `datasets-compound/` | External tools and public evidence, not versioned |
 
 ## The rule engine
 
@@ -161,18 +163,23 @@ is arranged to prevent.
 
 ### Detection rules
 
-**13 rules, 11 ATT&CK techniques, 5 tactics.** Every one is executed against
+**15 rules, 13 ATT&CK techniques, 7 tactics.** Every one is executed against
 public attack samples on each commit, and what is recorded is not a count but a
-list: which sample file produces which hits.
+list: which sample file produces which hits. The Windows rules are checked
+against Hayabusa and the Linux ones against Zircolite; the network rule has no
+independent engine that reads Zeek, so its manifest checks rastro alone and
+says so.
 
 | Technique | Rule | Platform | Hits |
 | --- | --- | --- | --- |
-| T1003.001 · LSASS Memory | LSASS memory access with read rights | Windows | 6 |
+| T1003.001 · LSASS Memory | LSASS memory access with read rights | Windows | 21 |
 | T1003.001 · LSASS Memory | Process memory dumped through comsvcs.dll | Windows | 1 |
 | T1003.006 · DCSync | Directory replication requested by a user account | Windows | 3 |
 | T1036.005 · Match Legitimate Name or Location | services.exe executed from a non-standard path | Windows | 0 |
 | T1053.003 · Cron | Scheduled task persistence through cron | Linux | 9 |
-| T1218.011 · Rundll32 | rundll32.exe proxy execution | Windows | 12 |
+| T1105 · Ingress Tool Transfer | Windows executable transferred over cleartext HTTP | Zeek | 6 |
+| T1218.011 · Rundll32 | rundll32.exe proxy execution | Windows | 11 |
+| T1218.011, T1055 · Rundll32, Process Injection | rundll32.exe started with no arguments | Windows | 1 |
 | T1546.008 · Accessibility Features | Child process of a Windows accessibility tool | Windows | 2 |
 | T1547.001 · Registry Run Keys | Autostart registry value set | Windows | 2 |
 | T1569.002 · Service Execution | PsExec style service pipes | Windows | 6 |
@@ -181,8 +188,8 @@ list: which sample file produces which hits.
 | T1685 · Disable or Modify Tools | Security service stopped | Linux | 21 |
 | T1685.005 · Clear Windows Event Logs | Windows event log cleared | Windows | 12 |
 
-Two techniques are covered by two rules each, which is why thirteen rules map to
-eleven techniques. The services.exe rule matching nothing is not a mistake:
+Some techniques are covered by more than one rule, which is why fifteen rules
+map to thirteen techniques. The services.exe rule matching nothing is not a mistake:
 there is no sample of that technique in the corpus, and what keeps the rule
 honest is the negative control described below.
 
@@ -215,8 +222,8 @@ It is that the gaps are written down.
   replicate with each other constantly. Half the matching events in the corpus
   are that legitimate replication.
 - **rundll32 through an export not on the list** passes unseen. A list of known
-  abuses ages; the other half of that rule, which looks for rundll32 started
-  with no arguments at all, does not depend on one.
+  abuses ages; rundll32 started with no arguments at all is a rule of its own,
+  at a higher level, because it does not depend on one.
 - **`shell32.dll,Control_RunDLL` is deliberately left out** of the same rule: it
   is how Windows opens every Control Panel applet, and including it would mean
   an alert every time somebody changes a setting.
@@ -244,31 +251,62 @@ It is that the gaps are written down.
 - **Sysmon writes its WMI events with the values quoted and the backslashes
   doubled**: `Destination  "c:\\Windows\\System32\\cmd.exe"`. A rule matching a
   plain path against a Sysmon 19, 20 or 21 will never fire. Sysmon does that,
-  not this tool, and it is the same class of silent failure the project started
-  from.
-- **Ten of Windows' message-table codes are shown as written.** `%%1833` and
-  nine others were resolved by making a real installation render the records
-  that carry them; the rest — audit policy categories, mostly — stay as
-  `%%7688` until they can be checked the same way. Two of them Windows itself
-  declined to resolve. An untranslated code is a gap the reader can look up; a
+  not this tool, and the values are matched as written on purpose: every other
+  Sigma backend sees the same text, and rewriting it would make rastro disagree
+  with them on the same evidence. The report says so in every run.
+- **Message-table codes are translated only from a source.** Every `%%NNNN` in
+  the pinned corpus is resolved — the last eleven read out of `msobjs.dll` on a
+  real installation — and a code from other evidence that no source covers is
+  shown as written. An untranslated code is a gap the reader can look up; a
   wrong label is one they cannot catch.
+- **Linux rules written for Sysmon for Linux** ask for fields auditd does not
+  write. `CommandLine` comes from the EXECVE arguments and `Image` from the
+  SYSCALL of the same event, both recorded; an EXECVE whose SYSCALL is not in
+  the evidence has no `Image` and the report counts it. `file_event` and
+  `network_connection` are not offered auditd records at all: they ask for
+  `Initiated` and `DestinationHostname`, which auditd never records, and
+  inventing them is not on the table.
 - **A process chain is only as long as the evidence.** Over a corpus of
   single-technique samples most of them stop after one or two steps and say so;
   over a full capture of one machine they reach the logon. The report counts
   how many stopped short rather than letting the reader assume they reached the
   beginning.
-- **The network source is read but not yet joined.** Zeek logs come in, their
-  rules run against them, and their findings appear in the report — but nothing
-  yet ties a DNS lookup to the process that made it. The join exists in
-  principle: a Zeek `conn.log` row and a Sysmon 3 carry the same five addresses
-  and ports, and Zeek's `uid` ties its own logs to each other. That is the
-  correlation the project exists for, and it is the next thing.
-- **No rules of this repository for the network side.** The public Zeek rules
-  load and run, and they are somebody else's work; the thirteen rules here are
-  all host-based.
+- **The join between host and network is on the five-tuple, never on time.**
+  The two sources keep their own clocks, and evidence that went through a
+  shipper can be days off; a tuple shared by two flows is reported as ambiguous
+  rather than broken by a clock. From the flow, Zeek's `uid` reaches `files.log`
+  and its `fuid` reaches `pe.log`, both written by Zeek.
+- **One rule of this repository for the network side**, a Windows executable
+  over cleartext HTTP. It has no independent engine to check it against, and
+  its manifest says so.
 
 Each of these also lives in the rule, the manifest or the code it belongs to,
 not only here.
+
+## Using it with your own rules
+
+The rules in `rules/` are a reference set and the test bench that proves the
+engine end to end: each has a manifest that CI checks against real evidence.
+They are not meant to be the rules a given SOC runs. Point the tool at your own:
+
+```
+rastro report -rules /path/to/your/rules -format html -out report.html /path/to/evidence
+```
+
+Anything the engine cannot run is refused when it loads and listed in the
+report, so a rule that would never fire does not count as coverage. Tuning for
+your environment — excluding your own EDR from a process-access rule, say —
+belongs in a filter of your rule, the way the reference LSASS rule filters
+`services.exe`, not in a narrower detection.
+
+## Performance
+
+Measured on a two-vCPU container over the compound corpus (Windows events
+through a shipper, gzipped, plus Zeek logs): one campaign of 53,952 records in
+4.0 s at a 13 MB peak; the seven campaigns, 364,406 records, in 25.9 s at
+27 MB; three copies of them, 1,093,218 records, in 77.6 s at 46 MB. About 14,000
+records a second, linear in time, and memory bounded by the ancestry and flow
+indexes rather than by the evidence: events are built, matched and dropped.
 
 ## Detection rules
 
