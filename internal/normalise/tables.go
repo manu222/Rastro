@@ -116,6 +116,23 @@ var SecurityAuditing = &Table{
 		"TicketOptions":        FormHex,
 		"TicketEncryptionType": FormHex,
 	},
+	Events: map[int]map[string]Form{
+		// The Filtering Platform writes the process id in base ten where the
+		// rest of this provider writes it in base sixteen. Read off the
+		// compound corpus, where campaign 01 alone has 195 records of 5158
+		// with ProcessId 1048 beside 4656, 4673 and 4688 in the same file
+		// with 0x11c0 and 0x1d18. Declared provider-wide, it made the shipper
+		// audit blame the shipper for all 954 of them across campaigns 01-04,
+		// and on the EVTX path it would turn an integer 1048 into 0x418.
+		//
+		// 5152 is the same platform dropping a packet. Sixteen of its records
+		// in campaign 01 carry ProcessId 0, the same text in either base, and
+		// confirm nothing; the one that settles it is in campaign 02, ProcessId
+		// 4, the System process, written as Windows writes it. 5156 calls the
+		// same field ProcessID and is already declared decimal above.
+		5152: {"ProcessId": FormDecimal},
+		5158: {"ProcessId": FormDecimal},
+	},
 }
 
 // Eventlog is the provider behind the two events that report the log was

@@ -96,6 +96,19 @@ func (f Form) String() string {
 type Table struct {
 	Producer string
 	Fields   map[string]Form
+	// Events overrides Fields for one event id. The form is mostly a property
+	// of the provider, but not always: the Security channel writes ProcessId
+	// in base sixteen on 4688 and in base ten on 5158, both in the same file.
+	Events map[int]map[string]Form
+}
+
+// form is the one lookup. An override for the event wins over the provider's
+// default, and nothing else is consulted.
+func (t *Table) form(id int, field string) Form {
+	if f, ok := t.Events[id][field]; ok {
+		return f
+	}
+	return t.Fields[field]
 }
 
 // Result is one rendered value.
@@ -155,10 +168,10 @@ func New(tables ...*Table) *Normaliser {
 // An error means the value could not be rendered without losing information,
 // which is treated as worth stopping for rather than papering over: a number
 // that does not survive the trip is a wrong number in a report.
-func (n *Normaliser) Render(producer, field string, v any) (Result, error) {
+func (n *Normaliser) Render(producer string, id int, field string, v any) (Result, error) {
 	form := FormUnset
 	if t, ok := n.tables[producer]; ok {
-		form = t.Fields[field]
+		form = t.form(id, field)
 	}
 
 	// A string is the provider's own text. Nothing to restore, whatever the
@@ -408,12 +421,12 @@ func (n *Normaliser) Declares(producer string) bool {
 // that has been through a log shipper arrives that way, and a shipper that
 // writes a logon id as 999 where Windows writes 0x3e7 breaks every rule that
 // mentions the field, quietly, which is the failure this package exists for.
-func (n *Normaliser) Form(producer, field string) Form {
+func (n *Normaliser) Form(producer string, id int, field string) Form {
 	t, ok := n.tables[producer]
 	if !ok {
 		return FormUnset
 	}
-	return t.Fields[field]
+	return t.form(id, field)
 }
 
 func (n *Normaliser) Gaps() []Gap {

@@ -120,6 +120,22 @@ name(s) arrived in a shape no provider table describes. Their values are in the
 report as the parser produced them, which may not be how the provider wrote
 them.</p>
 {{ end }}
+{{ if .Limits.ClockDisagreements }}
+<p><strong>Clocks that disagree:</strong>
+{{ .Limits.ClockDisagreements }} of {{ .Limits.ShippedRecords }} record(s) that
+came through a log shipper carry a provider time more than a minute from the record's own. Times from that evidence
+order its events and do not date them.{{ with .Limits.FirstClockDisagreement }}
+The first was: {{ . }}.{{ end }}</p>
+{{ end }}
+{{ with .Limits.ShipperForms }}
+<p><strong>Fields a shipper rewrote:</strong> a rule comparing against the form
+the provider writes does not match these, and says nothing.</p>
+<ul>{{ range . }}
+<li><code>{{ .Field }}</code> of {{ .Producer }}: the provider writes {{ .Declared }},
+the shipper wrote {{ .Written }}, in {{ .Count }} record(s), for example
+<code>{{ .Sample }}</code></li>{{ end }}
+</ul>
+{{ end }}
 {{ if or .Limits.DeducedValues .Limits.IncompleteChains }}
 <p><strong>How much of this is inference:</strong> {{ .Limits.DeducedValues }}
 finding(s) name an account that was worked out rather than recorded, and

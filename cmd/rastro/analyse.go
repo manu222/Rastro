@@ -163,6 +163,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 			// into an event, are both evidence that was not read, which is the
 			// same thing the other three readers count under their own names.
 			in.UnreadableRecords += stats.Unparsed + stats.Unreadable
+			in.ShippedRecords += stats.Records
+			in.ClockDisagreements += stats.Disagreements
+			if stats.FirstDisagreement != nil && in.FirstClockDisagreement == "" {
+				in.FirstClockDisagreement = fmt.Sprintf("%s: %v", filepath.Base(path), stats.FirstDisagreement)
+			}
 			failure = stats.FirstFailure
 		}
 		if rerr != nil {
@@ -178,6 +183,12 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	}
 	in.Elapsed = time.Since(start)
 	in.UndeclaredShapes = len(windows.Gaps())
+	for _, d := range shipped.Divergences() {
+		in.ShipperForms = append(in.ShipperForms, report.ShipperForm{
+			Producer: d.Producer, Field: d.Field, Declared: d.Declared.String(),
+			Written: d.Written, Sample: d.Sample, Count: d.Count,
+		})
+	}
 
 	for host := range hosts {
 		in.Hosts = append(in.Hosts, host)

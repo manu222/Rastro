@@ -423,3 +423,25 @@ func TestNamedIntegerTypesAreNotRejected(t *testing.T) {
 		t.Errorf("GrantedAccess through a named type: %q", f.Fields["GrantedAccess"])
 	}
 }
+
+// The event id has to be known before the data is rendered, because how a
+// field is written can depend on it. Values from the 5158 of
+// LSASS_campaign_01, in the shape the EVTX parser hands back, with ProcessId
+// as the integer that parser produces.
+func TestTheEventIdIsKnownBeforeTheDataIsRendered(t *testing.T) {
+	rec := map[string]any{"Event": map[string]any{
+		"System": map[string]any{
+			"Provider": map[string]any{"#attributes": map[string]any{"Name": "Microsoft-Windows-Security-Auditing"}},
+			"EventID":  json.Number("5158"),
+			"Channel":  "Security",
+		},
+		"EventData": map[string]any{"ProcessId": int64(1048), "SourcePort": "63829"},
+	}}
+	f, err := Flatten(rec, normalise.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Fields["ProcessId"]; got != "1048" {
+		t.Errorf("ProcessId of a 5158 rendered as %q; Windows writes 1048", got)
+	}
+}

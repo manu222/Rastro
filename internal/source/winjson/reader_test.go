@@ -413,3 +413,19 @@ level: low
 		t.Errorf("a rule matching 0x62f2d did not fire on a record carrying it: %q", events[0].Raw["LogonId"])
 	}
 }
+
+// A 5158 out of LSASS_campaign_01, unchanged except for the Message, which is
+// the same text again. Windows writes this event's ProcessId in base ten, and
+// the shipper wrote what Windows wrote. Before the table knew about the event,
+// this record was reported as the shipper's mistake.
+const securityBind = `{"SourceName":"Microsoft-Windows-Security-Auditing","ProviderGuid":"{54849625-5478-4994-a5ba-3e3b0328c30d}","Level":"0","Keywords":"0x8020000000000000","Channel":"Security","Hostname":"MKT01.pandalab.com","TimeCreated":"2023-08-15T09:53:48.738Z","@timestamp":"2023-08-15T09:53:48.738Z","EventID":5158,"Task":"12810","ProcessId":"1048","Application":"\\device\\harddiskvolume2\\windows\\system32\\svchost.exe","SourceAddress":"::","SourcePort":"63829","Protocol":"17","FilterRTID":"0","LayerName":"%%14608","LayerRTID":"36"}`
+
+func TestAFieldTheEventWritesInBaseTenIsNotBlamedOnTheShipper(t *testing.T) {
+	r, _, stats := read(t, "host.json", securityBind+"\n"+securityCreate+"\n")
+	if stats.Records != 2 {
+		t.Fatalf("stats: %+v", stats)
+	}
+	if d := r.Divergences(); len(d) != 0 {
+		t.Errorf("a 5158 written the way Windows writes it was reported as divergent: %+v", d)
+	}
+}

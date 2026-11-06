@@ -141,6 +141,12 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 	}
 
 	// EventData is the provider's own, so it goes through the provider's table.
+	// The id before any data is rendered: how a field is written can depend on
+	// the event and not only on the provider. See normalise.Table.Events.
+	if id, err := strconv.Atoi(f.Fields["EventID"]); err == nil {
+		f.EventID = id
+	}
+
 	switch data := ev["EventData"].(type) {
 	case nil:
 		// Some records carry no EventData at all. Twenty-six of them in the
@@ -197,7 +203,7 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 				// A value directly under the block rather than an element of
 				// its own. Rendered under the inner name, which is what the
 				// provider called it.
-				res, err := n.Render(f.Producer, inner, content)
+				res, err := n.Render(f.Producer, f.EventID, inner, content)
 				if err != nil {
 					return Flat{}, fmt.Errorf("%s.%s: %w", name, inner, err)
 				}
@@ -213,9 +219,6 @@ func Flatten(rec map[string]any, n *normalise.Normaliser) (Flat, error) {
 
 	f.Channel = f.Fields["Channel"]
 	f.Computer = f.Fields["Computer"]
-	if id, err := strconv.Atoi(f.Fields["EventID"]); err == nil {
-		f.EventID = id
-	}
 	if ts := f.Fields["SystemTime"]; ts != "" {
 		t, err := parseSystemTime(ts)
 		if err != nil {
@@ -301,7 +304,7 @@ func (f *Flat) addData(n *normalise.Normaliser, where string, data map[string]an
 			}
 			continue
 		}
-		res, err := n.Render(f.Producer, name, raw)
+		res, err := n.Render(f.Producer, f.EventID, name, raw)
 		if err != nil {
 			return fmt.Errorf("%s.%s: %w", where, name, err)
 		}

@@ -329,7 +329,7 @@ func (r *Reader) build(raw map[string]any, path string, line int64, stats *Stats
 	// The forms. This is the audit, and it runs on every record because a
 	// shipper that renders one field differently renders it differently
 	// everywhere, and the cost of looking is a map lookup per field.
-	r.audit(flat.Producer, flat.Fields)
+	r.audit(flat.Producer, flat.EventID, flat.Fields)
 
 	t, source, disagreement := timeOf(flat.Fields, raw)
 	flat.Time = t
@@ -470,9 +470,9 @@ func parseStamp(ts string) (time.Time, error) {
 // Case is not a divergence. The matching in this project folds case, so 0x3E7
 // and 0x3e7 are the same value to every rule, and reporting it would be noise
 // that teaches whoever reads the audit to ignore it.
-func (r *Reader) audit(producer string, fields map[string]string) {
+func (r *Reader) audit(producer string, id int, fields map[string]string) {
 	for name, text := range fields {
-		declared := r.Normaliser.Form(producer, name)
+		declared := r.Normaliser.Form(producer, id, name)
 		switch declared {
 		case normalise.FormHex, normalise.FormDecimal, normalise.FormBool:
 		default:

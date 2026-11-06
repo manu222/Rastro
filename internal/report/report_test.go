@@ -538,3 +538,60 @@ func render(t *testing.T, fn func(io.Writer, *Report, Section) error, r *Report)
 	}
 	return buf.String()
 }
+
+// What the shipped-evidence reader measured reaches every view and every
+// selection of sections. The numbers are campaign 01's: 47,906 of 53,698
+// records with clocks nineteen hours apart. Before this, both were computed
+// and thrown away.
+func TestTheShipperNumbersAreInEveryRenderingAndEverySelectionOfViews(t *testing.T) {
+	in := sampleInput()
+	in.ShippedRecords, in.ClockDisagreements = 53698, 47906
+	in.FirstClockDisagreement = "host.json.gz: line 2236: 19h0m0s apart"
+	in.ShipperForms = []ShipperForm{{
+		Producer: "Microsoft-Windows-Security-Auditing", Field: "SubjectLogonId",
+		Declared: "hex", Written: "decimal", Sample: "999", Count: 3,
+	}}
+	r := Build(in, []Match{sampleMatch()})
+
+	for _, sections := range []Section{SectionEntities, SectionTimeline, SectionTactics, AllSections} {
+		var md, html strings.Builder
+		if err := Markdown(&md, r, sections); err != nil {
+			t.Fatal(err)
+		}
+		if err := HTML(&html, r, sections); err != nil {
+			t.Fatal(err)
+		}
+		for name, out := range map[string]string{"markdown": md.String(), "html": html.String()} {
+			for _, want := range []string{"47906 of 53698", "line 2236", "SubjectLogonId", "999"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s with sections %d: %q is missing", name, sections, want)
+				}
+			}
+		}
+	}
+
+	var js strings.Builder
+	if err := JSON(&js, r); err != nil {
+		t.Fatal(err)
+	}
+	var back Report
+	if err := json.Unmarshal([]byte(js.String()), &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Limits.ClockDisagreements != 47906 || back.Limits.ShippedRecords != 53698 ||
+		len(back.Limits.ShipperForms) != 1 {
+		t.Errorf("json: %+v", back.Limits)
+	}
+}
+
+// A faithful shipper is a result, not an absence: the list is there and empty,
+// so whoever ingests the JSON can tell "checked and clean" from "not checked".
+func TestACleanShipperIsAnEmptyListAndNotAMissingOne(t *testing.T) {
+	var js strings.Builder
+	if err := JSON(&js, Build(sampleInput(), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js.String(), `"shipper_forms": []`) {
+		t.Errorf("shipper_forms is not an empty list:\n%s", js.String())
+	}
+}

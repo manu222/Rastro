@@ -13,11 +13,11 @@ const sysmon = "Microsoft-Windows-Sysmon"
 func TestAccessMaskSurvivesEitherParser(t *testing.T) {
 	n := Default()
 
-	fromRust, err := n.Render(sysmon, "GrantedAccess", "0x1010")
+	fromRust, err := n.Render(sysmon, 0, "GrantedAccess", "0x1010")
 	if err != nil {
 		t.Fatalf("string form rejected: %v", err)
 	}
-	fromGo, err := n.Render(sysmon, "GrantedAccess", uint32(4112))
+	fromGo, err := n.Render(sysmon, 0, "GrantedAccess", uint32(4112))
 	if err != nil {
 		t.Fatalf("numeric form rejected: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestAccessMaskSurvivesEitherParser(t *testing.T) {
 // A provider's own text is never second-guessed, whatever the table says.
 func TestTextIsLeftAlone(t *testing.T) {
 	n := Default()
-	got, err := n.Render(sysmon, "ProcessId", "0x1358")
+	got, err := n.Render(sysmon, 0, "ProcessId", "0x1358")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ func TestTextIsLeftAlone(t *testing.T) {
 // tables are per provider and not one global map.
 func TestProvidersDisagreeAndBothAreRight(t *testing.T) {
 	n := Default()
-	sys, _ := n.Render(sysmon, "ProcessId", int64(640))
-	sec, _ := n.Render("Microsoft-Windows-Security-Auditing", "ProcessID", int64(812))
+	sys, _ := n.Render(sysmon, 0, "ProcessId", int64(640))
+	sec, _ := n.Render("Microsoft-Windows-Security-Auditing", 0, "ProcessID", int64(812))
 	if sys.Text != "640" || sec.Text != "812" {
 		t.Errorf("decimal identifiers rendered wrong: %q %q", sys.Text, sec.Text)
 	}
@@ -65,7 +65,7 @@ func TestLargestUnsignedValueIsNotCorrupted(t *testing.T) {
 	const want = "18446744073709551615"
 	n := Default()
 
-	got, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", uint64(1<<64-1))
+	got, err := n.Render("Microsoft-Windows-Bits-Client", 0, "bandwidthLimit", uint64(1<<64-1))
 	if err != nil {
 		t.Fatalf("a uint64 was rejected: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestLargestUnsignedValueIsNotCorrupted(t *testing.T) {
 	}
 
 	// Decoded with json.Number, as a careful JSON reader would.
-	got, err = n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", json.Number(want))
+	got, err = n.Render("Microsoft-Windows-Bits-Client", 0, "bandwidthLimit", json.Number(want))
 	if err != nil {
 		t.Fatalf("json.Number was rejected: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestLargestUnsignedValueIsNotCorrupted(t *testing.T) {
 func TestFloatThatCannotBeExactIsDroppedAndRecorded(t *testing.T) {
 	n := Default()
 
-	got, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", float64(1<<64-1))
+	got, err := n.Render("Microsoft-Windows-Bits-Client", 0, "bandwidthLimit", float64(1<<64-1))
 	if err != nil {
 		t.Fatalf("an imprecise value killed the record: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestFloatThatCannotBeExactIsDroppedAndRecorded(t *testing.T) {
 		t.Errorf("the loss was not recorded: %+v", n.Gaps())
 	}
 
-	got, err = n.Render(sysmon, "SourcePort", float64(49158))
+	got, err = n.Render(sysmon, 0, "SourcePort", float64(49158))
 	if err != nil || got.Text != "49158" {
 		t.Errorf("a float64 small enough to be exact was mishandled: %q %v", got.Text, err)
 	}
@@ -114,7 +114,7 @@ func TestFloatThatCannotBeExactIsDroppedAndRecorded(t *testing.T) {
 func TestNumberWithDecimalsIsKept(t *testing.T) {
 	n := Default()
 
-	got, err := n.Render("Microsoft-Windows-Bits-Client", "fileTime", float64(1290255420.401))
+	got, err := n.Render("Microsoft-Windows-Bits-Client", 0, "fileTime", float64(1290255420.401))
 	if err != nil {
 		t.Fatalf("a legitimate number was rejected: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestNumberWithDecimalsIsKept(t *testing.T) {
 	// Through json.Number the digits never see a float64, so what comes out is
 	// exactly what the file said — including trailing precision a float64 would
 	// have rewritten.
-	got, err = n.Render("Microsoft-Windows-Bits-Client", "fileTime", json.Number("1557670683.5895078"))
+	got, err = n.Render("Microsoft-Windows-Bits-Client", 0, "fileTime", json.Number("1557670683.5895078"))
 	if err != nil {
 		t.Fatalf("json.Number with decimals was rejected: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestNumberWithDecimalsIsKept(t *testing.T) {
 // The distinction the fix above rests on: decimals are fine, magnitude is not.
 func TestLargeIntegralFloatIsStillRefused(t *testing.T) {
 	n := Default()
-	got, err := n.Render("Microsoft-Windows-Bits-Client", "bandwidthLimit", float64(1<<63))
+	got, err := n.Render("Microsoft-Windows-Bits-Client", 0, "bandwidthLimit", float64(1<<63))
 	if err != nil {
 		t.Fatalf("an imprecise value killed the record: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestDeclaredRealIsNotAGap(t *testing.T) {
 		Producer: "Microsoft-Windows-Bits-Client",
 		Fields:   map[string]Form{"fileTime": FormReal},
 	})
-	got, err := n.Render("Microsoft-Windows-Bits-Client", "fileTime", float64(1290255420.401))
+	got, err := n.Render("Microsoft-Windows-Bits-Client", 0, "fileTime", float64(1290255420.401))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestDeclaredRealIsNotAGap(t *testing.T) {
 // matching the moment backslashes were escaped.
 func TestListOfValuesIsJoinedWithoutEscaping(t *testing.T) {
 	n := Default()
-	got, err := n.Render("MSSQLSERVER", "Data", []string{"sa", `Reason: C:\Windows\x.exe`})
+	got, err := n.Render("MSSQLSERVER", 0, "Data", []string{"sa", `Reason: C:\Windows\x.exe`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,12 +191,12 @@ func TestListOfValuesIsJoinedWithoutEscaping(t *testing.T) {
 // A message table reference is a label, not a quantity.
 func TestMessageReferenceIsNotTurnedIntoArithmetic(t *testing.T) {
 	n := Default()
-	got, _ := n.Render("Microsoft-Windows-Security-Auditing", "ImpersonationLevel", "%%1833")
+	got, _ := n.Render("Microsoft-Windows-Security-Auditing", 0, "ImpersonationLevel", "%%1833")
 	if got.Text != "%%1833" {
 		t.Errorf("a message reference was rewritten: %q", got.Text)
 	}
 	// Arriving as a bare number contradicts the declaration, so it is recorded.
-	if _, err := n.Render("Microsoft-Windows-Security-Auditing", "ImpersonationLevel", int64(3)); err != nil {
+	if _, err := n.Render("Microsoft-Windows-Security-Auditing", 0, "ImpersonationLevel", int64(3)); err != nil {
 		t.Fatal(err)
 	}
 	gaps := gapsFor(n, "ImpersonationLevel")
@@ -212,10 +212,10 @@ func TestMessageReferenceIsNotTurnedIntoArithmetic(t *testing.T) {
 // declared. It must not be silent.
 func TestUndeclaredFieldIsRecorded(t *testing.T) {
 	n := Default()
-	if _, err := n.Render(sysmon, "SomeFieldNobodyDeclared", int64(7)); err != nil {
+	if _, err := n.Render(sysmon, 0, "SomeFieldNobodyDeclared", int64(7)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := n.Render(sysmon, "SomeFieldNobodyDeclared", int64(9)); err != nil {
+	if _, err := n.Render(sysmon, 0, "SomeFieldNobodyDeclared", int64(9)); err != nil {
 		t.Fatal(err)
 	}
 	gaps := gapsFor(n, "SomeFieldNobodyDeclared")
@@ -235,7 +235,7 @@ func TestUndeclaredFieldIsRecorded(t *testing.T) {
 // being read.
 func TestUndeclaredTextIsNotAGap(t *testing.T) {
 	n := Default()
-	if _, err := n.Render(sysmon, "SomethingElse", "a value"); err != nil {
+	if _, err := n.Render(sysmon, 0, "SomethingElse", "a value"); err != nil {
 		t.Fatal(err)
 	}
 	if len(n.Gaps()) != 0 {
@@ -245,7 +245,7 @@ func TestUndeclaredTextIsNotAGap(t *testing.T) {
 
 func TestNestedValueIsKeptAsJSON(t *testing.T) {
 	n := Default()
-	got, err := n.Render(sysmon, "Data", map[string]any{"#text": "sa"})
+	got, err := n.Render(sysmon, 0, "Data", map[string]any{"#text": "sa"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,4 +262,31 @@ func gapsFor(n *Normaliser, field string) []Gap {
 		}
 	}
 	return out
+}
+
+// The same field name, the same provider, two bases. 4688 and 5158 both sit
+// in the Security channel of LSASS_campaign_01, with ProcessId 0x11c0 on one
+// and 1048 on the other.
+func TestOneEventCanWriteAFieldDifferentlyFromItsProvider(t *testing.T) {
+	n := Default()
+	const sec = "Microsoft-Windows-Security-Auditing"
+	for _, c := range []struct {
+		id   int
+		want string
+		form Form
+	}{
+		{4688, "0x418", FormHex},
+		{5158, "1048", FormDecimal},
+	} {
+		res, err := n.Render(sec, c.id, "ProcessId", int64(1048))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Text != c.want {
+			t.Errorf("%d: rendered %q, want %q", c.id, res.Text, c.want)
+		}
+		if got := n.Form(sec, c.id, "ProcessId"); got != c.form {
+			t.Errorf("%d: declared %s, want %s", c.id, got, c.form)
+		}
+	}
 }

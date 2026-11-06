@@ -336,6 +336,12 @@ type Reach struct {
 
 // Network reports the connections the event's acting process opened.
 func (ix *Index) Network(e *event.Event) Reach {
+	// A record from the wire has no acting process to ask about. Its process
+	// is the other half of the join, which Connection answers; saying here
+	// that "a pid is reused" would explain an absence that is not one.
+	if e.Raw["id.orig_h"] != "" {
+		return Reach{}
+	}
 	guid := e.Process.GUID.Value
 	if guid == "" {
 		// Without an identifier that is unique over time there is nothing to

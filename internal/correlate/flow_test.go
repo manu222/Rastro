@@ -492,3 +492,12 @@ func TestAUIDNamingTwoConnectionsIsReportedRatherThanGuessed(t *testing.T) {
 		t.Fatalf("got %+v", c)
 	}
 }
+
+func TestARecordFromTheWireIsNotAskedWhereItsProcessWent(t *testing.T) {
+	ix := New()
+	ix.Observe(zeekFlow())
+	ix.Observe(hostConnection())
+	if r := ix.Network(zeekFile()); r.Unresolved != "" || r.Total != 0 {
+		t.Errorf("a files.log record was answered as if it named a process: %+v", r)
+	}
+}

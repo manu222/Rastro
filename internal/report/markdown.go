@@ -164,6 +164,27 @@ func writeLimitsMarkdown(out *writer, r *Report) {
 			"which may not be how the provider wrote them.", l.UndeclaredShapes)
 		out.blank()
 	}
+	if l.ClockDisagreements > 0 {
+		any = true
+		out.line("**Clocks that disagree:** %d of %d record(s) that came through a log shipper "+
+			"carry a provider time more than a minute from the record's own. Times from that "+
+			"evidence order its events and do not date them.", l.ClockDisagreements, l.ShippedRecords)
+		if l.FirstClockDisagreement != "" {
+			out.line("The first was: %s.", l.FirstClockDisagreement)
+		}
+		out.blank()
+	}
+	if len(l.ShipperForms) > 0 {
+		any = true
+		out.line("**Fields a shipper rewrote:** a rule comparing against the form the provider " +
+			"writes does not match these, and says nothing.")
+		out.blank()
+		for _, s := range l.ShipperForms {
+			out.line("- `%s` of %s: the provider writes %s, the shipper wrote %s, in %d record(s), for example `%s`",
+				s.Field, s.Producer, s.Declared, s.Written, s.Count, s.Sample)
+		}
+		out.blank()
+	}
 	if l.DeducedValues > 0 || l.IncompleteChains > 0 {
 		any = true
 		out.line("**How much of this is inference:** %d finding(s) name an account that was",

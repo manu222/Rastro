@@ -134,9 +134,33 @@ type Limits struct {
 	// on inference rather than on what was recorded.
 	DeducedValues    int `json:"deduced_values"`
 	IncompleteChains int `json:"incomplete_chains"`
+	// ClockDisagreements counts records that came through a log shipper whose
+	// provider time is more than a minute from the record's own, out of
+	// ShippedRecords. The timeline uses the record's time, which orders the
+	// events of that evidence and does not date them. On the compound corpus
+	// this is 86 to 98 per cent of every campaign, which is why it is a count
+	// and not a warning per record.
+	ClockDisagreements     int    `json:"clock_disagreements"`
+	ShippedRecords         int    `json:"shipped_records"`
+	FirstClockDisagreement string `json:"first_clock_disagreement,omitempty"`
+	// ShipperForms are fields a shipper wrote in a form the provider does not
+	// use. A rule comparing against the provider's form does not match them,
+	// and says nothing. Always present, empty when the shipper was faithful,
+	// so that an ingesting SIEM can tell "checked, clean" from "not checked".
+	ShipperForms []ShipperForm `json:"shipper_forms"`
 	// Notes are the blind spots that are properties of the method rather than
 	// of this run.
 	Notes []string `json:"notes,omitempty"`
+}
+
+// ShipperForm is one field a shipper wrote differently from its provider.
+type ShipperForm struct {
+	Producer string `json:"producer"`
+	Field    string `json:"field"`
+	Declared string `json:"provider_writes"`
+	Written  string `json:"shipper_wrote"`
+	Sample   string `json:"sample"`
+	Count    int    `json:"records"`
 }
 
 // Refusal is one rule that did not load.
@@ -415,6 +439,11 @@ type Input struct {
 	SkippedFields     int
 	UndeclaredShapes  int
 
+	ClockDisagreements     int
+	ShippedRecords         int
+	FirstClockDisagreement string
+	ShipperForms           []ShipperForm
+
 	Notes []string
 }
 
@@ -463,7 +492,13 @@ func Build(in Input, matches []Match) *Report {
 			FirstFailure:      in.FirstFailure,
 			SkippedFields:     in.SkippedFields,
 			UndeclaredShapes:  in.UndeclaredShapes,
-			Notes:             in.Notes,
+
+			ClockDisagreements:     in.ClockDisagreements,
+			ShippedRecords:         in.ShippedRecords,
+			FirstClockDisagreement: in.FirstClockDisagreement,
+			ShipperForms:           append([]ShipperForm{}, in.ShipperForms...),
+
+			Notes: in.Notes,
 		},
 	}
 	for _, u := range in.Refused {
