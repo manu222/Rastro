@@ -46,7 +46,20 @@ func Markdown(w io.Writer, r *Report, sections Section) error {
 		out.line("| By severity | %s |", strings.Join(parts, ", "))
 	}
 	out.line("| Time taken | %s |", r.Evidence.Elapsed)
+	if b := r.Baseline; b != nil {
+		out.line("| Compared with | `%s`, generated %s: %d new, %d seen before, %d no longer produced |",
+			b.File, b.Generated.Format("2006-01-02 15:04:05"), b.New, b.Seen, len(b.Gone))
+	}
 	out.blank()
+	if b := r.Baseline; b != nil && len(b.Gone) > 0 {
+		out.line("**In the earlier report and not in this one.** Not resolved: gone from what this run read.")
+		out.blank()
+		for _, g := range b.Gone {
+			out.line("- `%s` %s — %s, %s on `%s`: %s", g.ID, strings.ToUpper(g.Level), g.Rule,
+				g.Time.Format("2006-01-02 15:04:05"), orDash(g.Host), g.Reason)
+		}
+		out.blank()
+	}
 
 	writeLimitsMarkdown(out, r)
 
@@ -60,8 +73,8 @@ func Markdown(w io.Writer, r *Report, sections Section) error {
 			out.line("Ordered by severity, then by how many findings touch them. This is the")
 			out.line("list to work down when deciding what to isolate.")
 			out.blank()
-			out.line("| | Entity | Severity | Findings | As | Rules |")
-			out.line("| --- | --- | --- | --- | --- | --- |")
+			out.line("| | Entity | Severity | Findings | As | Machines | Seen (UTC) | Rules |")
+			out.line("| --- | --- | --- | --- | --- | --- | --- | --- |")
 			for _, e := range r.Entities {
 				name := e.Name
 				if e.Deduced {
@@ -70,9 +83,14 @@ func Markdown(w io.Writer, r *Report, sections Section) error {
 					// ones.
 					name += " *(deduced)*"
 				}
-				out.line("| %s | %s | %s | %d | %s | %s |",
+				var seen []string
+				for _, s := range e.Seen {
+					seen = append(seen, s.Describe())
+				}
+				out.line("| %s | %s | %s | %d | %s | %s | %s | %s |",
 					e.Kind, name, e.Worst, e.Findings,
-					strings.Join(e.Roles, ", "), strings.Join(e.Rules, "; "))
+					strings.Join(e.Roles, ", "), strings.Join(e.Hosts, ", "),
+					strings.Join(seen, "; "), strings.Join(e.Rules, "; "))
 			}
 			out.blank()
 		}
@@ -210,7 +228,13 @@ func writeLimitsMarkdown(out *writer, r *Report) {
 }
 
 func writeFindingMarkdown(out *writer, n int, f Finding) {
-	out.line("### %d. %s — %s", n, strings.ToUpper(f.Level), f.Rule)
+	status := ""
+	if f.Status == "new" {
+		status = " (new)"
+	}
+	out.line("### %d. %s — %s%s", n, strings.ToUpper(f.Level), f.Rule, status)
+	out.blank()
+	out.line("Finding `%s`.", f.ID)
 	out.blank()
 	out.line("%s on `%s`", f.Time.Format("2006-01-02 15:04:05"), f.Host)
 	out.blank()

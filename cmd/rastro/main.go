@@ -27,7 +27,8 @@ const usage = `usage:
   rastro read   [-sample] [-codes] <evidence directory>
   rastro detect [-rules <directory>] [-examples <n>] <evidence directory>
   rastro report [-rules <directory>] [-format md|html|json]
-                [-sections entities,timeline,tactics] [-out <file>] <evidence directory>`
+                [-sections entities,timeline,tactics] [-out <file>]
+                [-baseline <earlier report.json>] <evidence directory>`
 
 func main() {
 	if len(os.Args) < 3 {

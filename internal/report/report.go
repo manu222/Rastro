@@ -88,6 +88,9 @@ type Report struct {
 	Evidence Evidence `json:"evidence"`
 	// Findings are every match, in the order they happened.
 	Findings []Finding `json:"findings"`
+	// Baseline is the comparison with an earlier report of the same case,
+	// present only when one was given.
+	Baseline *Comparison `json:"baseline,omitempty"`
 	// Limits is what the analysis could not do.
 	Limits Limits `json:"limits"`
 
@@ -187,6 +190,13 @@ type Refusal struct {
 
 // Finding is one match, with everything needed to check it.
 type Finding struct {
+	// ID is the same for the same finding in two runs over evidence that has
+	// grown or been collected again: see fingerprint.
+	ID string `json:"id"`
+	// Status is set only when the report was compared with an earlier one:
+	// "new", or "seen before".
+	Status string `json:"status,omitempty"`
+
 	Time   time.Time `json:"time"`
 	Rule   string    `json:"rule"`
 	RuleID string    `json:"rule_id,omitempty"`
@@ -415,6 +425,55 @@ type Entity struct {
 	Roles []string `json:"roles,omitempty"`
 	// Deduced marks an entity that only ever appeared as a deduction.
 	Deduced bool `json:"deduced"`
+
+	// Hosts is every machine a finding on this entity happened on. An account
+	// or a file on two machines is the shape lateral movement leaves, and it
+	// shows here whatever the time between the two.
+	Hosts []string `json:"hosts"`
+	// Seen is when, one span per source. Host evidence and the network capture
+	// keep their own clocks, and a span from the first host record to the last
+	// flow would compare them, which this report does not do anywhere else.
+	Seen []Span `json:"seen"`
+}
+
+// Span is the first and last finding on an entity within one source, and on
+// how many calendar days (UTC) of that source's clock it had findings. No time
+// window is involved: an access on day one and its use a week later are the
+// same entity, and the span is how far apart they are.
+type Span struct {
+	Source   string    `json:"source"`
+	First    time.Time `json:"first"`
+	FirstAt  Record    `json:"first_record"`
+	Last     time.Time `json:"last"`
+	LastAt   Record    `json:"last_record"`
+	Days     int       `json:"days"`
+	Findings int       `json:"findings"`
+}
+
+// Describe writes a span the way the entity table shows it: the source, the
+// first and last finding, and the number of days when there is more than one.
+func (s Span) Describe() string {
+	const layout = "2006-01-02 15:04"
+	out := s.Source + " " + s.First.UTC().Format(layout)
+	if !s.Last.Equal(s.First) {
+		last := s.Last.UTC().Format(layout)
+		if s.Last.UTC().Format("2006-01-02") == s.First.UTC().Format("2006-01-02") {
+			last = s.Last.UTC().Format("15:04")
+		}
+		out += " to " + last
+	}
+	if s.Days > 1 {
+		out += fmt.Sprintf(", on %d days", s.Days)
+	}
+	return out
+}
+
+// clockOf names the clock a finding's time was read from.
+func clockOf(f Finding) string {
+	if strings.HasPrefix(f.Origin.Producer, "zeek/") {
+		return "network"
+	}
+	return "host"
 }
 
 // Tactic groups findings by ATT&CK tactic and technique.
@@ -536,6 +595,7 @@ func Build(in Input, matches []Match) *Report {
 	sort.SliceStable(r.Findings, func(i, j int) bool {
 		return r.Findings[i].Time.Before(r.Findings[j].Time)
 	})
+	assignIDs(r.Findings)
 
 	for _, f := range r.Findings {
 		if f.AccountDeduced {
@@ -760,6 +820,13 @@ func buildEntities(findings []Finding) []Entity {
 	index := map[key]*Entity{}
 	roles := map[key]map[string]bool{}
 	rules := map[key]map[string]bool{}
+	hosts := map[key]map[string]bool{}
+	type spanKey struct {
+		k      key
+		source string
+	}
+	spans := map[spanKey]*Span{}
+	days := map[spanKey]map[string]bool{}
 
 	for _, f := range findings {
 		for _, inv := range f.Involved {
@@ -780,6 +847,28 @@ func buildEntities(findings []Finding) []Entity {
 				index[k] = ent
 				roles[k] = map[string]bool{}
 				rules[k] = map[string]bool{}
+				hosts[k] = map[string]bool{}
+			}
+			if f.Host != "" && inv.Kind != "host" {
+				hosts[k][f.Host] = true
+			}
+			// A finding with no time is not placed; it still counts above.
+			if !f.Time.IsZero() {
+				sk := spanKey{k, clockOf(f)}
+				sp := spans[sk]
+				if sp == nil {
+					sp = &Span{Source: sk.source, First: f.Time, FirstAt: f.Origin, Last: f.Time, LastAt: f.Origin}
+					spans[sk] = sp
+					days[sk] = map[string]bool{}
+				}
+				if f.Time.Before(sp.First) {
+					sp.First, sp.FirstAt = f.Time, f.Origin
+				}
+				if f.Time.After(sp.Last) {
+					sp.Last, sp.LastAt = f.Time, f.Origin
+				}
+				sp.Findings++
+				days[sk][f.Time.UTC().Format("2006-01-02")] = true
 			}
 			ent.Findings++
 			// An entity seen observed even once is not a deduction.
@@ -800,6 +889,14 @@ func buildEntities(findings []Finding) []Entity {
 	for k, ent := range index {
 		ent.Roles = sortedKeys(roles[k])
 		ent.Rules = sortedKeys(rules[k])
+		ent.Hosts = nonNil(sortedKeys(hosts[k]))
+		ent.Seen = []Span{}
+		for _, source := range []string{"host", "network"} {
+			if sp := spans[spanKey{k, source}]; sp != nil {
+				sp.Days = len(days[spanKey{k, source}])
+				ent.Seen = append(ent.Seen, *sp)
+			}
+		}
 		out = append(out, *ent)
 	}
 	// Worst first, then most findings, then by name, so the top of the list is

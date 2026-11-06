@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ func runReport(args []string) error {
 		format   = ""
 		sections = ""
 		out      = ""
+		baseline = ""
 	)
 	for len(args) > 1 && strings.HasPrefix(args[0], "-") {
 		switch args[0] {
@@ -35,6 +37,8 @@ func runReport(args []string) error {
 			sections, args = args[1], args[2:]
 		case "-out":
 			out, args = args[1], args[2:]
+		case "-baseline":
+			baseline, args = args[1], args[2:]
 		default:
 			return fmt.Errorf("unknown option %s", args[0])
 		}
@@ -67,6 +71,13 @@ func runReport(args []string) error {
 		return err
 	}
 	r := report.Build(in, matches)
+	if baseline != "" {
+		prev, err := readBaseline(baseline)
+		if err != nil {
+			return err
+		}
+		report.Compare(r, prev, baseline, in.Loaded)
+	}
 
 	w := io.Writer(os.Stdout)
 	if out != "" {
@@ -99,4 +110,22 @@ func runReport(args []string) error {
 			len(r.Findings), r.Evidence.Records, out)
 	}
 	return nil
+}
+
+// readBaseline reads an earlier JSON report of the same case. A file that is
+// not one is an error and not an empty baseline: comparing against nothing
+// would mark every finding new, which is a claim about the case.
+func readBaseline(path string) (*report.Report, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var prev report.Report
+	if err := json.Unmarshal(data, &prev); err != nil {
+		return nil, fmt.Errorf("%s is not a JSON report of this tool: %v", path, err)
+	}
+	if prev.Generated.IsZero() || prev.Findings == nil {
+		return nil, fmt.Errorf("%s is not a JSON report of this tool: it has no generation time or no findings list", path)
+	}
+	return &prev, nil
 }

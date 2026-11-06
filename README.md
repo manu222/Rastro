@@ -299,6 +299,34 @@ your environment — excluding your own EDR from a process-access rule, say —
 belongs in a filter of your rule, the way the reference LSASS rule filters
 `services.exe`, not in a narrower detection.
 
+## An incident that is still open
+
+Rastro is meant for the middle of an investigation, not the post-mortem. The
+evidence grows while the case is open: another machine is collected, the next
+day's logs arrive. Keep each day's collection in its own folder, link them into
+one case folder, and compare every new run with the JSON of the last one:
+
+```
+rastro report -out day1.json case/
+# day 2 collected and linked into case/
+rastro report -baseline day1.json -out day2.html case/
+```
+
+Each finding carries an ID built from what it says (the rule, the machine, the
+event's own time and the values that made it fire) and not from where it was
+read, so a finding is recognised after the evidence is reorganised or exported
+again. The report marks what is new and lists what the earlier one had and this
+one does not, with the reason: the rule did not run, or the evidence of this run
+did not produce it. That second list is never called resolved. On the APT29
+evaluation, day 1 linked beside day 2 recognises all 32 day-1 findings and marks
+the 7 of day 2 as new.
+
+There is no time window anywhere. An access on Monday and its use on Friday are
+the same entity in the "What is affected" table, which shows every machine an
+entity had findings on and, for each source, its first and last finding and on
+how many days. Host and network times are kept as separate spans, because the
+two keep separate clocks.
+
 ## Performance
 
 Measured on a two-vCPU container over the compound corpus (Windows events

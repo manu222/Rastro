@@ -89,7 +89,10 @@ pre { background: #8881; padding: .7rem .9rem; border-radius: 4px; overflow-x: a
 <tr><th>Rules running</th><td>{{ .Evidence.RulesLoaded }}</td></tr>
 <tr><th>Findings</th><td>{{ len .Findings }}{{ if .Severity }} &mdash; {{ range $i, $s := .Severity }}{{ if $i }}, {{ end }}{{ $s.Findings }} <span class="lvl {{ $s.Level }}">{{ $s.Level }}</span>{{ end }}{{ end }}</td></tr>
 <tr><th>Time taken</th><td>{{ .Evidence.Elapsed }}</td></tr>
+{{ with .Baseline }}<tr><th>Compared with</th><td><code>{{ .File }}</code>, generated {{ .Generated.Format "2006-01-02 15:04:05" }}: {{ .New }} new, {{ .Seen }} seen before, {{ len .Gone }} no longer produced</td></tr>{{ end }}
 </table>
+{{ with .Baseline }}{{ with .Gone }}<p><strong>In the earlier report and not in this one.</strong> Not resolved: gone from what this run read.</p>
+<ul>{{ range . }}<li><code>{{ .ID }}</code> <span class="lvl {{ .Level }}">{{ .Level }}</span> {{ .Rule }}, {{ .Time.Format "2006-01-02 15:04:05" }}{{ with .Host }} on <code>{{ . }}</code>{{ end }}: {{ .Reason }}</li>{{ end }}</ul>{{ end }}{{ end }}
 
 <h2>What this analysis could not do</h2>
 <div class="limits">
@@ -157,7 +160,7 @@ report was deduced.</p>
 <p class="meta">Ordered by severity, then by how many findings touch them. This is
 the list to work down when deciding what to isolate.</p>
 <table>
-<tr><th>Kind</th><th>Entity</th><th>Severity</th><th>Findings</th><th>As</th><th>Rules</th></tr>
+<tr><th>Kind</th><th>Entity</th><th>Severity</th><th>Findings</th><th>As</th><th>Machines</th><th>Seen (UTC)</th><th>Rules</th></tr>
 {{ range .Entities }}
 <tr>
 <td>{{ .Kind }}</td>
@@ -165,6 +168,8 @@ the list to work down when deciding what to isolate.</p>
 <td><span class="lvl {{ .Worst }}">{{ .Worst }}</span></td>
 <td>{{ .Findings }}</td>
 <td class="meta">{{ range $i, $r := .Roles }}{{ if $i }}, {{ end }}{{ $r }}{{ end }}</td>
+<td class="meta">{{ join .Hosts }}</td>
+<td class="meta">{{ range $i, $s := .Seen }}{{ if $i }}; {{ end }}{{ $s.Describe }}{{ end }}</td>
 <td class="meta">{{ range $i, $r := .Rules }}{{ if $i }}; {{ end }}{{ $r }}{{ end }}</td>
 </tr>
 {{ end }}
@@ -190,7 +195,8 @@ the list to work down when deciding what to isolate.</p>
 {{ if .Findings }}
 {{ range $n, $f := .Findings }}
 <div class="finding">
-<h3>{{ inc $n }}. <span class="lvl {{ $f.Level }}">{{ $f.Level }}</span> {{ $f.Rule }}</h3>
+<h3>{{ inc $n }}. <span class="lvl {{ $f.Level }}">{{ $f.Level }}</span> {{ $f.Rule }}{{ if eq $f.Status "new" }} <span class="deduced">(new)</span>{{ end }}</h3>
+<p class="meta">Finding <code>{{ $f.ID }}</code>.</p>
 <p class="meta">{{ $f.Time.Format "2006-01-02 15:04:05" }} on <code>{{ $f.Host }}</code></p>
 {{ with $f.Action }}
 <p>{{ title . }}{{ if $f.Account }} by <strong>{{ $f.Account }}</strong>{{ if $f.AccountDeduced }}

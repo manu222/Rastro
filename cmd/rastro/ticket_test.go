@@ -189,3 +189,73 @@ func reason(f *report.Finding, field string) string {
 	}
 	return ""
 }
+
+// The same case a day later. Day 2 is collected and linked into the case
+// folder beside day 1, and the report is compared with the JSON written the
+// day before. Every day-1 finding has to be recognised although its file is
+// now day1/host/host.json.gz instead of host/host.json.gz, nothing may be
+// reported gone, and what day 2 adds is new. Measured: 32 and 7.
+func TestAnOpenIncidentComparedWithYesterday(t *testing.T) {
+	root, err := repoRootForTest()
+	if err != nil {
+		t.Skip("cannot find the repository root")
+	}
+	corpus := filepath.Join(root, "datasets-apt29")
+	for _, d := range []string{"day1", "day2"} {
+		if _, err := os.Stat(filepath.Join(corpus, d, "host", "host.json.gz")); err != nil {
+			skipOrFailHere(t, "datasets-apt29 is not on this machine (scripts/fetch-apt29.sh)")
+			return
+		}
+	}
+	rules := filepath.Join(root, "rules")
+
+	in, matches, _, err := analyse(rules, filepath.Join(corpus, "day1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	yesterday := filepath.Join(t.TempDir(), "day1.json")
+	f, err := os.Create(yesterday)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := report.JSON(f, report.Build(in, matches)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	caseDir := t.TempDir()
+	for _, d := range []string{"day1", "day2"} {
+		if err := os.Symlink(filepath.Join(corpus, d), filepath.Join(caseDir, d)); err != nil {
+			t.Skipf("symbolic links are not available here: %v", err)
+		}
+	}
+	in, matches, _, err = analyse(rules, caseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := report.Build(in, matches)
+	prev, err := readBaseline(yesterday)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Compare(r, prev, yesterday, in.Loaded)
+	if b := r.Baseline; b.Seen != len(prev.Findings) || b.New != 7 || len(b.Gone) != 0 {
+		t.Errorf("seen before %d of %d, new %d, gone %d; want all, 7 and 0: %+v",
+			b.Seen, len(prev.Findings), b.New, len(b.Gone), b.Gone)
+	}
+}
+
+// A file that is not a report is refused, not read as an empty baseline that
+// would make every finding new.
+func TestABaselineThatIsNotAReportIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{"empty.json": "{}", "list.json": "[]", "text.json": "not json"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readBaseline(path); err == nil {
+			t.Errorf("%s was accepted as a baseline", name)
+		}
+	}
+}

@@ -674,3 +674,87 @@ func TestAnAncestorsConnectionsReachTheLineage(t *testing.T) {
 		}
 	}
 }
+
+// An entity seen on two machines nine days apart: the span has no window, the
+// machines are listed, and a finding read off the network's clock is a span of
+// its own instead of being compared with the host's.
+func TestAnEntitySpansDaysAndMachinesWithoutAWindow(t *testing.T) {
+	first := sampleMatch()
+	later := sampleMatch()
+	later.Event.Time = first.Event.Time.Add(9 * 24 * time.Hour)
+	later.Event.Host = event.Seen("WIN10")
+	later.Event.Origin.Record = 99
+	wire := sampleMatch()
+	wire.Event.Origin.Producer = "zeek/files"
+	wire.Event.Time = first.Event.Time.Add(-48 * time.Hour)
+
+	r := Build(Input{}, []Match{later, first, wire})
+	var lsass *Entity
+	for i := range r.Entities {
+		if r.Entities[i].Name == `C:\Windows\system32\lsass.exe` {
+			lsass = &r.Entities[i]
+		}
+	}
+	if lsass == nil {
+		t.Fatalf("no lsass entity: %+v", r.Entities)
+	}
+	if len(lsass.Hosts) != 2 || lsass.Hosts[0] != "IEWIN7" || lsass.Hosts[1] != "WIN10" {
+		t.Errorf("machines: %v", lsass.Hosts)
+	}
+	if len(lsass.Seen) != 2 || lsass.Seen[0].Source != "host" || lsass.Seen[1].Source != "network" {
+		t.Fatalf("spans: %+v", lsass.Seen)
+	}
+	host := lsass.Seen[0]
+	if host.Days != 2 || host.Findings != 2 || host.FirstAt.Number != 22 || host.LastAt.Number != 99 {
+		t.Errorf("host span: %+v", host)
+	}
+	if got := host.Describe(); got != "host 2019-04-18 16:58 to 2019-04-27 16:58, on 2 days" {
+		t.Errorf("described as %q", got)
+	}
+	var md bytes.Buffer
+	if err := Markdown(&md, r, AllSections); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(md.String(), "on 2 days") || !strings.Contains(md.String(), "IEWIN7, WIN10") {
+		t.Error("the entity table does not show the span and the machines")
+	}
+}
+
+// A finding is the same finding in a later run if it says the same thing, even
+// read from another file at another record; a finding that went away says
+// whether its rule ran; an earlier report without IDs is still compared.
+func TestAComparisonFollowsFindingsAcrossRuns(t *testing.T) {
+	kept, dropped := sampleMatch(), sampleMatch()
+	dropped.Event.Time = dropped.Event.Time.Add(time.Hour)
+	prev := Build(Input{}, []Match{kept, dropped})
+	prev.Findings[1].ID = "" // as an older report wrote it
+
+	moved, added := sampleMatch(), sampleMatch()
+	moved.Event.Origin = event.Origin{Path: "case/day1/Security.evtx", Record: 9001, Producer: moved.Event.Origin.Producer}
+	added.Event.Host = event.Seen("WIN10")
+	r := Build(Input{}, []Match{moved, added})
+
+	Compare(r, prev, "previous.json", []*sigma.Compiled{kept.Rule})
+	b := r.Baseline
+	if b == nil || b.New != 1 || b.Seen != 1 || len(b.Gone) != 1 {
+		t.Fatalf("comparison: %+v", b)
+	}
+	if r.Findings[0].Status != "seen before" || r.Findings[1].Status != "new" {
+		t.Errorf("statuses %q, %q", r.Findings[0].Status, r.Findings[1].Status)
+	}
+	if !strings.Contains(b.Gone[0].Reason, "rule ran") {
+		t.Errorf("gone reason: %q", b.Gone[0].Reason)
+	}
+	Compare(r, prev, "previous.json", nil)
+	if !strings.Contains(r.Baseline.Gone[0].Reason, "not loaded") {
+		t.Errorf("a finding whose rule did not run is not said to be that: %q", r.Baseline.Gone[0].Reason)
+	}
+}
+
+// Two findings that say exactly the same thing still get one ID each.
+func TestIdenticalFindingsGetDistinctIDs(t *testing.T) {
+	r := Build(Input{}, []Match{sampleMatch(), sampleMatch()})
+	if r.Findings[0].ID == r.Findings[1].ID || !strings.HasPrefix(r.Findings[1].ID, r.Findings[0].ID+"-") {
+		t.Errorf("ids %q and %q", r.Findings[0].ID, r.Findings[1].ID)
+	}
+}
