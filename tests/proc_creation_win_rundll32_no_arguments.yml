@@ -1,0 +1,28 @@
+# Test manifest for rules/windows/proc_creation_win_rundll32_no_arguments.yml
+#
+# One hit, and the one that matters most of the rundll32 captures: it does not
+# rest on any list. rundll32 with no library and no export has nothing to run.
+# Split out of the proxy execution rule, whose manifest no longer lists it.
+#
+# Nothing in the compound campaigns matches, and nothing else in
+# EVTX-ATTACK-SAMPLES does either.
+#
+# No negative control: the rule has no exclusions to switch off.
+
+rule: rules/windows/proc_creation_win_rundll32_no_arguments.yml
+rule_id: 3af69761-1b85-4d3a-8d76-252394b32f70
+
+dataset:
+  repo: https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  commit: 4ceed2f4706daf601c212a8f91c113dd85349a2c
+  license: GPL-3.0
+  note: referenced, not redistributed
+
+expect:
+  - file: Execution/Sysmon_meterpreter_ReflectivePEInjection_to_notepad_.evtx
+    hits: 1
+    note: >-
+      rundll32 with no library and no export, in a capture of Meterpreter's
+      reflective PE injection.
+
+total: 1

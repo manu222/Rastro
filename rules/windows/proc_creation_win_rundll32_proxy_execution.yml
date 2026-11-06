@@ -3,8 +3,10 @@ id: 946871c4-50c4-42a6-ad70-853bafd6339e
 status: experimental
 description: |
     Detects rundll32 being used to run something other than an ordinary library
-    entry point: either a built-in Windows DLL whose export exists to launch
-    another program, or rundll32 started with no arguments at all.
+    entry point: a built-in Windows DLL whose export exists to launch another
+    program. rundll32 started with no arguments at all is a separate rule,
+    proc_creation_win_rundll32_no_arguments, because it rests on no list and
+    deserves a higher level.
 
     Nothing in these command lines belongs to the attacker. The executable and
     the library are signed by Microsoft, allow-listed by application control and
@@ -12,11 +14,8 @@ description: |
     scan. What stays visible is the pair of library and export, which has to
     appear on the command line for the call to work.
 
-    The export list is the weak half of this rule and is treated as such: an
-    abuse that uses an export not listed here passes unseen. The second branch
-    does not depend on a list. A rundll32 process with no library and no export
-    has nothing to run, so it exists only to be injected into, which is how
-    Meterpreter and Cobalt Strike place a host process.
+    The export list is the weak point of this rule and is treated as such: an
+    abuse that uses an export not listed here passes unseen.
 references:
     - https://attack.mitre.org/techniques/T1218/011/
 author: Manuel Araujo
@@ -67,18 +66,13 @@ detection:
             - 'SetupInfObjectInstallAction'
             - 'InstallHinfSection'
             - 'RunHTMLApplication'
-    # No library, no export, nothing to run. Both spellings appear in real data,
-    # with and without the closing quote around the image path.
-    selection_no_arguments:
-        - CommandLine|endswith: 'rundll32.exe'
-        - CommandLine|endswith: 'rundll32.exe"'
     # Two deliberate omissions, both of them visible misses in the dataset:
     #   shell32.dll,Control_RunDLL is how Windows opens every Control Panel
     #   applet, so including it would mean an alert each time someone changes a
     #   setting.
     #   comsvcs.dll,MiniDump is rundll32 as well, but the behaviour is dumping
     #   LSASS. It belongs in a credential access rule of its own.
-    condition: process_creation and rundll32_process and ((selection_lolbin_dll and selection_lolbin_export) or selection_no_arguments)
+    condition: process_creation and rundll32_process and selection_lolbin_dll and selection_lolbin_export
 falsepositives:
     - Opening an internet shortcut, which the shell handles through rundll32 and
       url.dll or ieframe.dll

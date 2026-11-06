@@ -1,0 +1,44 @@
+title: rundll32.exe Started With No Arguments
+id: 3af69761-1b85-4d3a-8d76-252394b32f70
+status: experimental
+description: |
+    Detects rundll32 started with no library and no export. Such a process has
+    nothing to run, so it exists only to receive injected code, which is how
+    Meterpreter and Cobalt Strike place a host process.
+
+    Split out of the proxy execution rule because it is the opposite kind of
+    detection: that one rests on a list of known exports and ages with it, this
+    one rests on nothing that an attacker can rename around. Hence the higher
+    level. In EVTX-ATTACK-SAMPLES it matches the Meterpreter capture and nothing
+    else, and it matches nothing in the seven compound campaigns.
+references:
+    - https://attack.mitre.org/techniques/T1218/011/
+    - https://attack.mitre.org/techniques/T1055/
+author: Manuel Araujo
+date: 2026-11-06
+tags:
+    - attack.stealth
+    - attack.t1218.011
+    - attack.privilege-escalation
+    - attack.t1055
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    rundll32_process:
+        - Image|endswith: '\rundll32.exe'
+        - OriginalFileName: 'RUNDLL32.EXE'
+    # Both spellings appear in real data, with and without the closing quote
+    # around the image path.
+    selection_no_arguments:
+        - CommandLine|endswith: 'rundll32.exe'
+        - CommandLine|endswith: 'rundll32.exe"'
+    condition: process_creation and rundll32_process and selection_no_arguments
+falsepositives:
+    - A tool that starts rundll32 bare and passes it work afterwards, which no
+      legitimate software in the pinned corpora does
+level: high
+ruletype: Sigma
