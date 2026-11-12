@@ -330,6 +330,32 @@ two keep separate clocks.
 `docs/pilot.md` describes how to try it in a SOC: closed incidents first,
 scored against what the analyst who closed them wrote down, then open ones.
 
+## A Velociraptor collection
+
+Point it at the zip the collector left, as it is:
+
+```
+rastro report -out ws01.html Collection-WS01-2026-11-12T21_02_08Z.zip
+```
+
+The copied files under `uploads/` are the evidence. The JSON files beside them
+describe the copy, and they are used for that: the report says how many files
+the collector listed, how many are there, and whether each one still hashes to
+the SHA-256 the collector recorded when the collection carries them. A file
+missing, cut short, altered or added, an error in the collector's own log, all
+make the note end with "over an incomplete or altered copy". An encrypted
+collection or a zip of something else is refused, not analysed as empty, and a
+zip lying inside an evidence folder is named as not opened.
+
+Measured on a collection of every event log of a Windows 10 machine in daily
+use (Velociraptor 0.77.3, 376 files, 379 MB): 414,647 records read, none
+unreadable, no damaged chunk, all 376 files matching their recorded hash, about
+40 seconds including unpacking.
+
+The same run found the Security log saying twice that audit events had been
+dropped (event 1101). The report now says that too, per machine, with the first
+record: no finding around those times is not the same as nothing happening.
+
 ## Performance
 
 Measured on a two-vCPU container over the compound corpus (Windows events

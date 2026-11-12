@@ -196,10 +196,11 @@ func printSamples() {
 }
 
 func run(dir string) error {
-	root, err := evidenceRoot(dir)
+	root, done, err := openEvidence(dir)
 	if err != nil {
 		return err
 	}
+	defer done()
 	reader := evtx.New(root)
 
 	var (

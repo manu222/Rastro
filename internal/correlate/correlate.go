@@ -215,7 +215,7 @@ func (ix *Index) observeProcess(e *event.Event) {
 		ix.byGUID[p.GUID] = p
 	}
 	if p.PID != "" {
-		key := p.Host + "\x00" + p.PID
+		key := hostKey(p.Host) + "\x00" + p.PID
 		ix.byPIDHost[key] = append(ix.byPIDHost[key], p)
 	}
 }
@@ -248,7 +248,7 @@ func (ix *Index) observeLogon(e *event.Event) {
 			l.User = name
 		}
 	}
-	key := e.Host.Value + "\x00" + id
+	key := hostKey(e.Host.Value) + "\x00" + id
 	if prev, ok := ix.logons[key]; ok {
 		// Windows reuses logon ids: 0x3e7 is SYSTEM on every boot, and any id
 		// can come back after a reboot. A repeat of the same session — same
@@ -298,7 +298,7 @@ func (ix *Index) Creator(e *event.Event) (*Process, string, bool) {
 	}
 	var found *Process
 	when := e.Time.UnixNano()
-	for _, p := range ix.byPIDHost[e.Host.Value+"\x00"+pid] {
+	for _, p := range ix.byPIDHost[hostKey(e.Host.Value)+"\x00"+pid] {
 		if p.Time > when {
 			continue
 		}
@@ -391,7 +391,7 @@ func (ix *Index) parentOf(p *Process) (*Process, string, bool) {
 		return nil, "", false
 	}
 	var found *Process
-	for _, candidate := range ix.byPIDHost[p.Host+"\x00"+p.ParentPID] {
+	for _, candidate := range ix.byPIDHost[hostKey(p.Host)+"\x00"+p.ParentPID] {
 		if candidate.Time > p.Time {
 			continue
 		}
@@ -452,7 +452,7 @@ func (ix *Index) Unresolved(e *event.Event) string {
 	}
 	candidates := 0
 	when := e.Time.UnixNano()
-	for _, p := range ix.byPIDHost[e.Host.Value+"\x00"+pid] {
+	for _, p := range ix.byPIDHost[hostKey(e.Host.Value)+"\x00"+pid] {
 		if p.Time <= when {
 			candidates++
 		}
@@ -480,7 +480,7 @@ func (ix *Index) Session(e *event.Event) (*Logon, event.Field) {
 		id = creator.LogonID
 		source = "the logon session the acting process was created in, from " + why
 	}
-	l := ix.logons[e.Host.Value+"\x00"+id]
+	l := ix.logons[hostKey(e.Host.Value)+"\x00"+id]
 	if l == nil {
 		// The session id is known and the logon that opened it is not in the
 		// evidence. Returning the id alone is still worth something: it groups
@@ -510,7 +510,7 @@ func (ix *Index) Entry(steps []Step) (*Logon, event.Field) {
 		if p.LogonID == "" {
 			continue
 		}
-		l := ix.logons[p.Host+"\x00"+p.LogonID]
+		l := ix.logons[hostKey(p.Host)+"\x00"+p.LogonID]
 		if l == nil {
 			continue
 		}
@@ -570,4 +570,12 @@ func Escalations(steps []Step) []Escalation {
 // what the analysis cost.
 func (ix *Index) Size() (processes, logons int) {
 	return len(ix.byGUID), len(ix.logons)
+}
+
+// hostKey is a machine's name as an index key. Windows compares names without
+// case and does not write them consistently: one machine's collection had
+// Ws01 in some channels and WS01 in others. Keyed as written, a logon read
+// from one and a process read from the other would never meet.
+func hostKey(name string) string {
+	return strings.ToLower(name)
 }

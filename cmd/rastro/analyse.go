@@ -54,10 +54,11 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		return in, nil, diag, fmt.Errorf("no rules loaded from %s", rulesDir)
 	}
 
-	root, err := evidenceRoot(evidenceDir)
+	root, done, err := openEvidence(evidenceDir)
 	if err != nil {
 		return in, nil, diag, err
 	}
+	defer done()
 
 	in.Directory = evidenceDir
 	in.Loaded = loaded.Rules
@@ -85,7 +86,15 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	diag.Flows, diag.HostConns = lineage.Flows()
 
 	index := newRuleIndex(loaded.Rules)
-	hosts := map[string]bool{}
+	// Machines by name without case, each with the spellings it arrived in:
+	// one Windows machine wrote itself as Ws01 in Security and Sysmon and as
+	// WS01 in other channels of the same collection.
+	hosts := map[string]map[string]int{}
+	type dropped struct {
+		times int
+		first string
+	}
+	auditDropped := map[string]*dropped{}
 	byRule := map[string]int{}
 	var matches []report.Match
 
@@ -93,10 +102,12 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 	unjoined := 0
 	var loss captureLoss
 	zeekFiles := 0
-	files, broken, err := evidenceFiles(root)
+	all, broken, err := evidenceFiles(root)
 	if err != nil {
 		return in, nil, diag, err
 	}
+	files := withoutDescriptions(all)
+	in.Notes = append(in.Notes, collectionNotes(root, all)...)
 	readOne := func(path string) error {
 		kind := sourceOf(path)
 		if kind == sourceNone {
@@ -122,7 +133,22 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		visit := func(e *event.Event) error {
 			in.Records++
 			if e.Host.Known() {
-				hosts[e.Host.Value] = true
+				k := strings.ToLower(e.Host.Value)
+				if hosts[k] == nil {
+					hosts[k] = map[string]int{}
+				}
+				hosts[k][e.Host.Value]++
+			}
+			// Event 1101: the audit subsystem saying it lost events before
+			// they reached the Security log.
+			if e.Raw["EventID"] == "1101" && e.Raw["Provider_Name"] == "Microsoft-Windows-Eventlog" {
+				d := auditDropped[e.Host.Value]
+				if d == nil {
+					d = &dropped{first: fmt.Sprintf("%s UTC, %s record %d",
+						e.Time.UTC().Format("2006-01-02 15:04:05"), e.Origin.Path, e.Origin.Record)}
+					auditDropped[e.Host.Value] = d
+				}
+				d.times++
 			}
 			if !e.Time.IsZero() {
 				if in.Earliest.IsZero() || e.Time.Before(in.Earliest) {
@@ -222,10 +248,31 @@ func analyse(rulesDir, evidenceDir string) (report.Input, []report.Match, Diagno
 		})
 	}
 
-	for host := range hosts {
-		in.Hosts = append(in.Hosts, host)
+	for _, forms := range hosts {
+		// The spelling most records used; the alphabetically first on a tie.
+		best := ""
+		for form, n := range forms {
+			if best == "" || n > forms[best] || (n == forms[best] && form < best) {
+				best = form
+			}
+		}
+		in.Hosts = append(in.Hosts, best)
 	}
 	sort.Strings(in.Hosts)
+
+	var lossy []string
+	for host := range auditDropped {
+		lossy = append(lossy, host)
+	}
+	sort.Strings(lossy)
+	for _, host := range lossy {
+		d := auditDropped[host]
+		in.Notes = append(in.Notes, fmt.Sprintf(
+			"The Security log of %s says %d time(s) that audit events were dropped before being "+
+				"written (event 1101), first at %s. What happened on it around those times may have "+
+				"left no record, and no finding there is not the same as nothing happening.",
+			orUnknown(host), d.times, d.first))
+	}
 
 	// Rules that loaded and never fired. Over evidence chosen to exercise them
 	// that is worth knowing: it is either a technique absent from this evidence

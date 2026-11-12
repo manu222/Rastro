@@ -24,3 +24,6 @@ vendor/
 
 # --- Local environment ---
 .env
+
+# Collections and exports from a live machine: evidence, never committed.
+muestras-lab/

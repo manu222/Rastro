@@ -430,7 +430,7 @@ func TestAReusedLogonIdIsCountedRatherThanReplaced(t *testing.T) {
 	if ix.LogonConflicts != 1 || !strings.Contains(ix.FirstLogonConflict, "pbeesly") || !strings.Contains(ix.FirstLogonConflict, "mscott") {
 		t.Errorf("conflicts %d, first %q", ix.LogonConflicts, ix.FirstLogonConflict)
 	}
-	if l := ix.logons["SCRANTON.dmevals.local\x000x3c4a1"]; l == nil || l.Origin.Record != 1 {
+	if l := ix.logons[hostKey("SCRANTON.dmevals.local")+"\x000x3c4a1"]; l == nil || l.Origin.Record != 1 {
 		t.Errorf("the first session was replaced: %+v", l)
 	}
 }
@@ -456,5 +456,20 @@ func TestEachStepCarriesWhereItConnected(t *testing.T) {
 	}
 	if got := steps[1].Opened; len(got) != 1 || got[0] != "192.168.0.5:1234 over tcp" {
 		t.Errorf("the screensaver's connection, once: %v", got)
+	}
+}
+
+// A pid looked up on WS01 finds the process created on Ws01.
+func TestAMachineIsTheSameMachineInAnyCase(t *testing.T) {
+	ix := New()
+	ix.Observe(creation(t, "2026-11-12T20:00:00Z", "Ws01", "{P}", "4242", `C:\Windows\System32\cmd.exe`, "", "", "", `WS01\ana`, "0x1", "Medium", 1))
+	later := &event.Event{
+		Time:    time.Date(2026, 11, 12, 20, 5, 0, 0, time.UTC),
+		Host:    event.Seen("WS01"),
+		Process: event.Process{PID: event.Seen("4242")},
+		Raw:     event.Fields{"EventID": "4663", "ProcessId": "4242"},
+	}
+	if steps, _ := ix.Ancestry(later); len(steps) == 0 {
+		t.Errorf("the process was not found across the two spellings: %s", ix.Unresolved(later))
 	}
 }

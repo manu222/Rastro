@@ -277,7 +277,7 @@ func walkEvidence(root string, windows *evtx.Reader, shipped *winjson.Reader, li
 	if err != nil {
 		return err
 	}
-	for _, path := range files {
+	for _, path := range withoutDescriptions(files) {
 		kind := sourceOf(path)
 		if kind == sourceNone {
 			continue
